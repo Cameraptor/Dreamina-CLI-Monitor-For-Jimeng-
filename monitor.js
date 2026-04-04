@@ -6,7 +6,7 @@ const { exec, execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-const PORT = 3333;
+let PORT = 3333;
 const HOME = process.env.HOME || process.env.USERPROFILE;
 const BIN_DIR = path.join(HOME, 'bin');
 
@@ -260,8 +260,14 @@ async function healthCheck() {
   }
   healthState.port.available = await checkPort(PORT);
   if (!healthState.port.available) {
-    console.error('\n  ✗ Port ' + PORT + ' already in use. Another monitor instance running?\n');
-    process.exit(1);
+    // Auto-find a free port starting from PORT+1
+    for (let p = PORT + 1; p < PORT + 50; p++) {
+      if (await checkPort(p)) { PORT = p; healthState.port.available = true; break; }
+    }
+    if (!healthState.port.available) {
+      console.error('\n  ✗ No free port found near ' + PORT + '\n');
+      process.exit(1);
+    }
   }
   healthState.cli.installed = hasDreamina();
   if (healthState.cli.installed) {

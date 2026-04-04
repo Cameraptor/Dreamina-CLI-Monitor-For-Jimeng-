@@ -4,14 +4,31 @@
 [![Platform](https://img.shields.io/badge/Platform-Win%20%7C%20Mac%20%7C%20Linux-blue)]()
 [![Telegram](https://img.shields.io/badge/Telegram-Community-2CA5E0?logo=telegram)](https://t.me/voogieboogie)
 
-# Dreamina Monitor — Real-Time AI Generation Dashboard
+# Dreamina Monitor — Real-Time AI Generation Dashboard & Best Agent Prompter for Seedance 2.0
 
-### The missing interface for [JiMeng / Dreamina](https://jimeng.jianying.com/) that ByteDance should have built.
+### The visual command center for [JiMeng / Dreamina CLI](https://jimeng.jianying.com/cli). Expert prompt system included. Monitor like a director. Pay the lowest prices on Earth.
 
-> One file. Zero dependencies. Self-configuring. Works on any OS.
-> Submit Seedance 2.0 / JiMeng generations from your IDE agent, monitor everything live, download results — all without touching the clunky web UI.
+---
 
-**Author:** Voogie | **Project:** [Cameraptor](https://cameraptor.com/voogie)
+### Why This Exists
+
+[JiMeng (即梦)](https://jimeng.jianying.com/) by ByteDance is the most cost-effective AI video generation platform in the world. **Seedance 2.0** produces cinema-grade results at a fraction of what Western platforms charge — and it keeps getting better.
+
+JiMeng offers [an official CLI](https://jimeng.jianying.com/cli) that unlocks the full power of the platform from the terminal. The CLI is excellent — 8 generation types, multiple models, reference images, videos, audio, multi-frame narratives — everything you need.
+
+**But the CLI is blind.** You submit a task, get a `submit_id`, and then... nothing. No visual feedback. No queue position. No way to see your results without manually running `query_result` for each task. No thumbnails of your references. No way to compare outputs side by side.
+
+**Dreamina Monitor gives the CLI its eyes.**
+
+Now combine this with **AI coding agents** (Claude Code, Cursor, Windsurf) that can write expert Seedance 2.0 prompts automatically using our included `seedance` prompt skill — and you get the most powerful, most convenient, and most affordable AI video production pipeline available today.
+
+```
+Agent writes prompt → CLI submits to JiMeng → Monitor shows it live → You review like a director
+```
+
+**One file. Zero dependencies. Self-configuring. Auto-selects free port. Works on any OS.**
+
+**Team:** [Cameraptor](https://cameraptor.com/voogie) | **Author:** Voogie
 
 ---
 
@@ -21,116 +38,125 @@
 
 ## The Problem
 
-**The official JiMeng web interface is painful:**
-- Slow, laggy, constantly reloading
-- No batch operations — download one file at a time
-- Can't see which prompt produced which result
-- No reference image preview on completed tasks
-- No credit tracking per session
-- Terrible on smaller screens
-- Impossible to use from an AI coding agent
+**The JiMeng web interface** works for casual browsing, but for serious production work it becomes a bottleneck. The site is overloaded and slow — pages lag, the UI feels heavy, asset management is clunky, sorting through generations is tedious, and there's no batch download. It's a consumer-grade UI trying to serve power users, and it shows.
 
-**Dreamina CLI is powerful but blind:**
-- You submit a task and get a `submit_id`
-- Then you manually run `query_result` over and over
-- No visual feedback, no queue position, no thumbnails
-- Forget which files you used as references? Too bad.
+**The Dreamina CLI** is the answer for power users — fast, scriptable, full API access. But it's completely blind. You submit tasks into a void. No visual feedback, no queue position, no thumbnails, no way to quickly scan your results. You end up context-switching between terminal and file browser constantly.
+
+**If you use AI agents** to write prompts and submit generations, you have zero visual feedback. You're directing a film with your eyes closed.
 
 ---
 
 ## The Solution
 
-**Dreamina Monitor** turns your localhost into a mission control center:
+**Dreamina Monitor** bridges the gap: all the power of the CLI, with a real-time visual dashboard that makes you feel like a director in a control room.
 
 ```bash
 node monitor.js
-# → http://localhost:3333
+# → http://localhost:3333 (auto-selects free port if busy)
 ```
 
 ![Dreamina Monitor — Main View](assets/dreamina_view.jpg)
 
-*Every generation card shows: model, ratio, duration, credit cost, full prompt, all input reference files as clickable thumbnails, video result with inline playback, download + like buttons.*
+*Every card: model, ratio, duration, credit cost, full prompt with copy, all reference files as clickable thumbnails, video result with hover-to-play, download + like.*
 
 ---
 
-## Why This Is Better Than the Official Web UI
+## The Director's Experience
 
-| | JiMeng Web UI | Dreamina Monitor |
+This is built for people who generate dozens of videos per session and need to review them fast:
+
+- **Hover-to-play** — scrub through results without clicking. Like reviewing dailies on a Moviola.
+- **Gallery grid** — see 24+ generations at once. Spot the best take instantly.
+- **Lasso select** — drag to select a batch, download all at once. No more one-by-one.
+- **Save to any folder** — native directory picker. Organize by project, scene, take.
+- **Like the best** — heart your favorites, filter by Liked tab, batch download liked.
+- **Full prompt on every card** — always know exactly what produced what.
+- **Input thumbnails** — see your reference images and videos right on the card. Never lose track of what you fed the model.
+- **Queue position + ETA** — know exactly when your generation will be ready. Plan your time.
+- **Sound + push notifications** — step away, get notified when it's done.
+
+This is the best experience for working with Seedance 2.0. Period.
+
+---
+
+## What You Get vs. Raw CLI
+
+| | Raw Dreamina CLI | With Dreamina Monitor |
 |---|---|---|
-| **Speed** | Slow page loads, React hydration lag | Instant — static HTML served from localhost |
-| **Queue visibility** | "Processing..." and hope | Exact queue position #4,231 / 141,681 + ETA |
-| **Reference files** | Gone after submit | Thumbnails of all input images/videos on every card |
-| **Batch download** | Click... wait... click... wait... | Lasso-select 20 results → download all at once |
-| **Credit tracking** | Buried in account page | Always visible in header + session spending breakdown |
-| **Prompt history** | Scroll through a feed | Full prompt on every card with copy button |
-| **Agent integration** | None | Submit from Claude Code / Cursor / Windsurf / any IDE |
-| **Notifications** | Check the tab manually | Sound beep + push notification when done |
-| **Likes & favorites** | None | Heart your best results, filter by Liked tab |
-| **Compare results** | Open multiple tabs | Gallery grid — 24+ thumbnails on one screen |
-| **Works offline** | No | Dashboard works without internet (shows cached tasks) |
-| **Open source** | No | MIT licensed, single file, read every line |
+| **Submit** | Terminal command → submit_id | Same — but now you SEE it appear live |
+| **Queue** | No visibility | Exact position #4,231 / 141,681 + progress bar + ETA |
+| **Reference files** | Forgotten after submit | Thumbnails of all inputs on every card |
+| **Results** | `query_result --submit_id=...` manually | Hover-to-play video, one-click download |
+| **Batch work** | One file at a time | Lasso-select → download all at once |
+| **Credits** | `dreamina user_credit` manually | Always visible + session spending breakdown |
+| **History** | Scroll through CLI output | Full dashboard with filters, sort, search by type |
+| **Comparison** | Open files separately | Gallery grid — all results on one screen |
+| **Favorites** | Remember the submit_id... | Heart button, Liked tab, batch download liked |
+| **Notifications** | Check terminal | Sound beep + push notification when done |
+| **Agent workflow** | No visual feedback | Full visual loop without leaving IDE |
 
 ---
 
-## Every Feature, Listed
+## Every Feature
 
 ### Real-Time Monitoring
-- **Auto-refresh** every 15/30/60 seconds — flicker-free DOM diffing
-- **Live queue position** with progress bar + ETA countdown
+- **Auto-refresh** every 15/30/60 seconds — flicker-free DOM diffing, no page reload
+- **Live queue position** with progress bar + ETA countdown (~500-900 positions/minute)
 - **Processing shimmer** animation for active tasks
 - **Dynamic tab title** — `(3 active) Dreamina Monitor` — see status without switching tabs
-- **Sound alerts** — distinct beeps for success and failure (Web Audio, no files)
-- **Push notifications** — browser notification when a generation completes in background tab
+- **Sound alerts** — distinct beeps for success and failure (Web Audio, zero files)
+- **Push notifications** — browser notification when a generation completes in background
 - **Session timer** — running clock showing total session duration
-- **Credit balance** — always visible in the header bar
+- **Credit balance** — always visible in header with Today / 7d / All spending breakdown
 
 ### Cards & Content
 - **Full prompt** on every card with expand/collapse and one-click copy
-- **Input file thumbnails** — all reference images and videos shown as clickable previews
-- **Video inline playback** — hover to play, click for fullscreen lightbox
+- **Input file thumbnails** — all reference images, videos, audio shown as clickable previews with labels (@1, @2...)
+- **Video hover-to-play** — instant preview without clicking. Click for fullscreen lightbox
 - **Image lightbox** — fullscreen viewer with arrow key navigation
-- **Model info** — Seedance 2.0 VIP, ratio, duration displayed as chips
-- **Credit cost** per task (estimated for queued, actual for completed)
-- **Task ID** — click to copy submit_id for CLI use
-- **Status indicators** — color-coded dots (green/yellow/red) + status text
+- **Model info** — model name, aspect ratio, duration displayed as chips
+- **Credit cost** per task — estimated for queued, actual for completed
+- **Task ID** — click to copy submit_id for CLI reuse
+- **Color-coded status** — green/yellow/red dots with status text
 
 ### Views
-- **Expanded view** — full card with all details, prompt, inputs, result
+- **Expanded list** — full card with all details, prompt, inputs, result, controls
 - **Gallery grid** — compact thumbnail grid for visual scanning
 - **Filter tabs** — All / Active / Done / Failed / Liked
-- **Type filter** — dropdown to filter by generation type
+- **Type filter** — dropdown by generation type (text2video, img2video, multimodal, etc.)
 - **Sort** — by status priority, newest, or oldest
-- **Ghost filtering** — zombie tasks auto-detected and collapsible
+- **Ghost detection** — zombie tasks auto-detected and collapsible
 
 ### Download & Workflow
-- **One-click download** — download result to default folder
+- **One-click download** — to default or custom folder
 - **Save As** — choose destination with native directory browser
-- **Batch select** — lasso drag or Shift+click to select multiple cards
-- **Batch download** — download all selected results at once
-- **Retry failed** — one click copies prompt for resubmit
-- **Hide zombie tasks** — clean up stuck/cancelled generations
+- **Batch select** — lasso drag or Shift+click multiple cards
+- **Batch download** — all selected results at once
+- **Retry failed** — copies prompt for resubmit
+- **Hide zombie tasks** — clean up stuck or cancelled generations
 - **Likes** — heart any generation, persists across sessions
-- **Download all liked** — batch export your favorites
+- **Download all liked** — batch export your best work
 
-### Design
-- **Hacker boot sequence** — ASCII art + terminal-style startup with animated status lines
+### Design & UX
+- **Hacker boot sequence** — ASCII art terminal startup with animated status lines
 - **Breathing radar grid** — animated canvas background, auto-pauses when tab hidden
-- **Dark theme** — purpose-built for long sessions — Raptor Green (#21C134) on deep black
+- **Dark theme** — Raptor Green (#21C134) on deep black, built for long sessions
 - **Embedded fonts** — Cormorant Garamond, Raleway, DM Mono
 - **Cameraptor branding** — custom embedded logo and favicon
-- **Responsive** — works on 13" laptops to 32" monitors
+- **Auto port selection** — if 3333 is busy, finds next free port automatically
+- **Responsive** — 13" laptops to 32" monitors
 
 ---
 
 ![Dreamina Monitor — Gallery Grid](assets/dreamina_previews.jpg)
 
-*Gallery grid: scan all your generations at a glance. Each thumbnail shows model, ratio, duration, cost. Hover to play videos. Green hearts = liked.*
+*Gallery grid: scan all generations at a glance. Hover to play. Green hearts = liked. Each card shows model, ratio, duration, cost.*
 
 ---
 
 ## Quick Start
 
-### 1. Install Node.js (if you don't have it)
+### 1. Install Node.js
 
 Download from [nodejs.org](https://nodejs.org/) — version 20 or higher.
 
@@ -145,26 +171,51 @@ node monitor.js
 
 ### 3. Open Dashboard
 
-Navigate to **http://localhost:3333** in your browser.
+The URL prints in terminal (default: **http://localhost:3333**).
 
-**That's it.** No `npm install`. No build step. No config. One file = one app.
+**No `npm install`. No build step. No config. One file = one app.**
 
 ### First Launch Auto-Setup
 
 On first run, the monitor automatically:
-
 1. Detects your OS (Windows / macOS / Linux + ARM64)
 2. Checks for Dreamina CLI — **downloads and installs it if missing**
-3. Verifies login — shows setup banner with instructions if needed
+3. Verifies login — shows setup banner with instructions if not
 4. Starts polling for your generations
+
+---
+
+## Supported Generation Types
+
+The monitor tracks all Dreamina CLI generation types:
+
+| Type | CLI Command | What it does |
+|------|-------------|-------------|
+| Text to Video | `text2video` | Prompt → video |
+| Image to Video | `image2video` | Single image + prompt → video |
+| Frames to Video | `frames2video` | First + last keyframe → interpolated video |
+| Multi-Frame | `multiframe2video` | 2-20 images → coherent video narrative |
+| Multimodal | `multimodal2video` | Images + videos + audio → video (flagship) |
+| Text to Image | `text2image` | Prompt → image |
+| Image to Image | `image2image` | Image + prompt → transformed image |
+| Image Upscale | `image_upscale` | Upscale to 2K / 4K / 8K |
+
+### Models
+
+| Model | Type | Cost |
+|-------|------|------|
+| `seedance2.0vip` | Video | ~20 cr / 4s (best value) |
+| `seedance2.0` | Video | ~50 cr / 4s |
+| `seedance2.0fast` / `seedance2.0fastvip` | Video | Faster, lower quality |
+| `5.0` / `4.6` / `4.5` / `lab` | Image | Various quality tiers |
+
+Video ratios: `16:9` `9:16` `1:1` `4:3` `3:4` `21:9` | Duration: **4-15 seconds** | Resolution: 720p
 
 ---
 
 ## The Agent Superpower
 
-The real magic happens when you combine Dreamina Monitor with AI coding agents.
-
-### The Workflow
+The real magic: combine Dreamina Monitor with AI coding agents.
 
 ```
 You (in IDE) → AI Agent → Dreamina CLI → JiMeng API
@@ -173,93 +224,76 @@ You (in IDE) → AI Agent → Dreamina CLI → JiMeng API
               (localhost:3333)    reads CLI logs
 ```
 
-1. **Prompt** — ask your AI agent to write a Seedance 2.0 prompt (or use the `seedance` skill)
+1. **Prompt** — ask your agent to write a Seedance 2.0 prompt (the `seedance` skill generates expert-level prompts automatically)
 2. **Submit** — agent runs `dreamina text2video --prompt="..." --model=seedance2.0vip`
-3. **Monitor** — generation appears on dashboard in real-time
-4. **Review** — play the video, check reference images, compare with other results
-5. **Iterate** — tweak the prompt in your agent, resubmit, compare in gallery grid
-6. **Export** — download the best results with one click
+3. **Monitor** — generation appears on dashboard in real-time with queue position
+4. **Review** — hover-to-play the video, check reference images, compare in gallery
+5. **Iterate** — tweak prompt in agent, resubmit, compare side by side
+6. **Export** — download the best results with one click or batch
 
 **You never leave your IDE.** The monitor is your visual feedback loop.
 
-### Compatible Agents & IDEs
+### Works With Any Agent or IDE
 
-| Agent / IDE | How to use |
-|-------------|-----------|
-| **Claude Code** | `seedance` skill for prompts + `dreamina` skill for CLI |
-| **Cursor** | Run CLI commands in terminal, monitor in browser |
-| **Windsurf** | Same — any agent that can run shell commands |
-| **GitHub Copilot** | Terminal commands via chat |
-| **Codex CLI** | Direct CLI access |
-| **Any terminal** | `dreamina text2video --prompt="..."` |
+Claude Code, Cursor, Windsurf, GitHub Copilot, Codex CLI — anything that can run shell commands. The `seedance` and `dreamina` skills are included for Claude Code users.
+
+---
+
+## Included Skills (for Claude Code)
+
+### Seedance Prompt Skill (`skills/seedance/`)
+
+A complete prompt engineering system for Seedance 2.0. Activates automatically when you ask your agent to write video prompts.
+
+| Module | What it covers |
+|--------|---------------|
+| **SKILL.md** | Master prompt formula, 3 modes (PROMPT/GENERATE/DUAL), @ reference system |
+| **camera-motion.md** | All shot types: dolly, crane, orbit, Hitchcock zoom, chase choreography |
+| **character-consistency.md** | Face lock, multi-character, style transfer |
+| **video-extension.md** | Forward/backward extension, scene insertion |
+| **commercial-ads.md** | Ad creation, product showcases, multi-language localization |
+| **editing-effects.md** | Character swaps, VFX transfer, beat-synced montages |
+| **one-take-storytelling.md** | Continuous one-take shots, multi-shot narrative |
+| **audio-lipsync.md** | Voice cloning, dialogue, lip sync, music, SFX |
+| **prompt-templates.md** | 20+ ready-to-use templates by category |
+| **community-patterns.md** | 20 curated best prompts from 190+ community submissions |
+
+### Dreamina CLI Skill (`skills/dreamina/`)
+
+Direct generation submission from your agent. Handles command selection, VIP model usage, image compression, queue tracking, and auto-integration with the monitor.
 
 ---
 
 ## Architecture
 
 ```
-monitor.js (~2700 lines — literally the entire application)
+monitor.js (~2700 lines — the entire application)
 │
-├── Node.js HTTP Server (port 3333, localhost only)
-│   ├── GET  /                    → full dashboard (embedded HTML/CSS/JS)
-│   ├── GET  /api/status          → all tasks with enriched details
-│   ├── GET  /api/credits         → JiMeng account balance
-│   ├── GET  /api/thumb?path=...  → serve local input file thumbnails
-│   ├── POST /api/track-inputs    → link reference files to task
-│   ├── POST /api/download        → download generation result
-│   ├── POST /api/like            → toggle task like
-│   ├── GET  /api/liked           → list of liked task IDs
-│   ├── GET  /api/settings        → user preferences
-│   ├── POST /api/settings        → update preferences
-│   ├── GET  /api/setup-status    → health check (Node, CLI, auth)
-│   └── GET  /api/favicon         → embedded Cameraptor icon
+├── Node.js HTTP Server (localhost only, auto port)
+│   ├── /api/status          → all tasks with enriched details
+│   ├── /api/credits         → JiMeng account balance
+│   ├── /api/thumb           → serve local input file thumbnails
+│   ├── /api/track-inputs    → link reference files + model to task
+│   ├── /api/download        → download generation result
+│   ├── /api/like            → toggle task like
+│   ├── /api/settings        → user preferences
+│   ├── /api/setup-status    → health check (Node, CLI, auth)
+│   └── + 6 more endpoints
 │
-├── Auto-Tracker (runs every 3 seconds)
-│   └── Parses ~/.dreamina_cli/logs/ → extracts model, ratio, duration, input files
+├── Auto-Tracker (every 3 seconds)
+│   └── Parses ~/.dreamina_cli/logs/ → model, ratio, duration, input files
 │
 └── Frontend (zero external dependencies)
-    ├── Embedded CSS (dark theme, responsive, animations)
-    ├── Embedded JS (fetch, DOM diffing, lightbox, canvas)
-    └── Embedded assets (logo SVG, favicon PNG, font links)
+    └── Embedded HTML + CSS + JS + SVG + favicon
 ```
-
-### Design Decisions
 
 | Decision | Why |
 |----------|-----|
-| **Single file** | Zero setup. `node monitor.js` and done. Share with anyone. |
-| **No npm** | No node_modules, no package.json, no supply chain risk |
-| **No framework** | Vanilla Node.js HTTP server. No Express, no React. |
-| **No Electron** | 150MB Electron bundle vs 1.1MB monitor.js |
-| **Localhost only** | Security: never exposed to network. Your data stays local. |
-| **HTML as string array** | No template engine needed. Concat and serve. |
-
----
-
-## Configuration
-
-Click **Settings** in the dashboard header:
-
-| Setting | Options | Default |
-|---------|---------|---------|
-| Auto-refresh interval | 15s / 30s / 60s / Off | 30s |
-| Download directory | Any local folder | ~/Downloads |
-
-Settings persist in `monitor-settings.json` (auto-created on first change).
-
----
-
-## File Reference
-
-| File | Purpose | Created |
-|------|---------|---------|
-| `monitor.js` | The entire application | Manual |
-| `monitor-settings.json` | User preferences | Auto |
-| `task-inputs.json` | Tracked generation inputs (model, ratio, files) | Auto |
-| `hidden-tasks.json` | IDs of hidden zombie tasks | Auto |
-| `liked-tasks.json` | IDs of liked tasks | Auto |
-| `DREAMINA_CLI.md` | Complete Dreamina CLI reference (Russian) | Manual |
-| `ROADMAP.md` | Project roadmap v1.0 → v2.0 | Manual |
+| **Single file** | Zero setup. `node monitor.js` — done. |
+| **No npm** | No node_modules, no supply chain risk |
+| **No framework** | Vanilla Node.js HTTP. No Express, no React. |
+| **No Electron** | 150MB Electron vs **1.1MB** monitor.js |
+| **Localhost only** | Your data never leaves your machine |
 
 ---
 
@@ -267,52 +301,27 @@ Settings persist in `monitor-settings.json` (auto-created on first change).
 
 If you are an AI agent reading this repository:
 
-1. **To run the monitor:** `node monitor.js` — it self-configures on first launch
-2. **To submit a generation:** use `dreamina` CLI (see [DREAMINA_CLI.md](DREAMINA_CLI.md))
-3. **To write prompts:** reference files in `skills/seedance/` for Seedance 2.0 prompt patterns
-4. **The dashboard** is at `http://localhost:3333` — tell the user to open it
-5. **All JSON files** (`task-inputs.json`, etc.) are auto-managed — do not edit manually
-6. **CLAUDE.md** contains system rules if you need project-level guidance
-
-### Key CLI Commands
+1. **Run the monitor:** `node monitor.js` — self-configures on first launch
+2. **Submit generations:** use Dreamina CLI (see [DREAMINA_CLI.md](DREAMINA_CLI.md))
+3. **Write prompts:** load `skills/seedance/` for Seedance 2.0 prompt engineering
+4. **Dashboard URL** prints in terminal — tell the user to open it
+5. **JSON files** are auto-managed — do not edit manually
 
 ```bash
-# Check CLI is installed
-dreamina --version
-
-# Login (opens browser)
-dreamina login
-
-# Check credits
-dreamina user_credit
-
-# Submit video generation
+# Key commands
+dreamina login                    # Auth (opens browser)
+dreamina user_credit              # Check balance
 dreamina text2video \
-  --prompt="your prompt here" \
+  --prompt="..." \
   --model=seedance2.0vip \
-  --ratio=16:9 \
-  --duration=15
+  --ratio=16:9 --duration=15      # Submit generation
 
-# Submit with reference images
-dreamina img2video \
-  --prompt="@Image1 as environment..." \
-  --image="path/to/ref1.jpg" \
-  --image="path/to/ref2.jpg" \
-  --model=seedance2.0vip
-
-# Check result
-dreamina query_result --submit_id=<id> --download_dir="./output"
+dreamina multimodal2video \
+  --prompt="@Image1 as env..." \
+  --image="ref1.jpg" \
+  --image="ref2.jpg" \
+  --model=seedance2.0vip          # With references
 ```
-
----
-
-## Companion Projects
-
-| Project | What it does |
-|---------|-------------|
-| [Seedance 2.0 ComfyUI Node](https://github.com/Cameraptor/seedance_2_Comfy_UI_Node-sjinn_Api-) | Generate Seedance 2.0 videos in ComfyUI workflows via Sjinn.ai |
-| `skills/seedance/` (included) | Claude Code skill for Seedance 2.0 prompt engineering |
-| `skills/dreamina/` (included) | Claude Code skill for Dreamina CLI operations |
 
 ---
 
@@ -320,9 +329,9 @@ dreamina query_result --submit_id=<id> --download_dir="./output"
 
 | Platform | Status |
 |----------|--------|
-| Windows 10/11 (x64) | Fully supported — primary dev platform |
+| Windows 10/11 (x64) | Fully supported |
 | macOS Intel | Supported |
-| macOS Apple Silicon (M1/M2/M3/M4) | Supported — auto-detects ARM64 |
+| macOS Apple Silicon (M1-M4) | Supported |
 | Linux x64 | Supported |
 
 ---
@@ -331,11 +340,11 @@ dreamina query_result --submit_id=<id> --download_dir="./output"
 
 | Version | Status | What |
 |---------|--------|------|
-| **v1.0** | Done | Dashboard, cards, filters, gallery, lightbox, batch download, branding |
-| **v1.1** | Done | Settings, likes, sound notifications, session stats, breathing radar grid |
-| **v1.2** | Done | Cross-platform, self-configuring, auto-download CLI, health checks |
-| **v1.3** | Next | Standalone `.exe` / binary — double-click to run, no Node.js needed |
-| **v2.0** | Planned | Side-by-side comparison, tags, prompt search, auto-download, WebSocket |
+| **v1.0** | Done | Dashboard, cards, filters, gallery, lightbox, batch download |
+| **v1.1** | Done | Settings, likes, notifications, session stats, radar grid |
+| **v1.2** | Done | Cross-platform, self-configuring, auto-download CLI |
+| **v1.3** | Next | Standalone `.exe` / binary — double-click to run |
+| **v2.0** | Planned | Side-by-side comparison, tags, prompt search, WebSocket |
 
 Full details in [ROADMAP.md](ROADMAP.md).
 
@@ -345,20 +354,12 @@ Full details in [ROADMAP.md](ROADMAP.md).
 
 | Problem | Solution |
 |---------|----------|
-| Port 3333 in use | Kill other process: `taskkill /F /IM node.exe` (Win) or `pkill -f monitor` (Mac/Linux) |
 | CLI not found | `curl -s https://jimeng.jianying.com/cli \| bash` then restart terminal |
-| Not logged in | `dreamina login` — opens browser for authentication |
-| No tasks showing | Submit something first: `dreamina text2video --prompt="test" --model=seedance2.0vip` |
+| Not logged in | `dreamina login` — opens browser for auth |
+| No tasks | Submit something: `dreamina text2video --prompt="test" --model=seedance2.0vip` |
 | Thumbnails missing | Reference files must exist at original paths on disk |
-| 403 on thumbnails | Files outside home directory — monitor auto-allows paths from task-inputs.json |
-
----
-
-## Support & Community
-
-- **Telegram:** [Join @voogieboogie](https://t.me/voogieboogie) — help, workflows, creative discussion
-- **Issues:** [GitHub Issues](https://github.com/Cameraptor/Dreamina-CLI-Monitor-For-Jimeng-/issues)
-- **Website:** [cameraptor.com/voogie](https://cameraptor.com/voogie)
+| Content filter | Remove brand names, soften descriptions — credits refunded on rejection |
+| Queue slow | Normal at peak: ~500-900 positions/min. VIP models may be faster |
 
 ---
 
@@ -366,14 +367,22 @@ Full details in [ROADMAP.md](ROADMAP.md).
 
 **Dreamina Monitor is 100% legal and does not violate JiMeng/Dreamina platform rules.**
 
-- **Uses only the official Dreamina CLI** — a tool published and maintained by JiMeng (ByteDance) themselves at [jimeng.jianying.com/cli](https://jimeng.jianying.com/cli), specifically designed for programmatic access
-- **No reverse engineering** — the monitor reads CLI log files and calls the same public API endpoints the CLI itself uses
-- **No scraping** — no interaction with the JiMeng web interface whatsoever
-- **No credential theft** — authentication is handled entirely by `dreamina login`, the official flow
-- **Personal use tool** — this is a convenience dashboard for your own account, your own generations, your own files
-- **The CLI exists for exactly this purpose** — ByteDance published the CLI so developers and creators can integrate JiMeng into their workflows. Dreamina Monitor is that workflow.
+- **Uses only the official Dreamina CLI** — published by JiMeng (ByteDance) at [jimeng.jianying.com/cli](https://jimeng.jianying.com/cli), designed for programmatic access
+- **No reverse engineering** — reads CLI logs and calls the same public API the CLI uses
+- **No scraping** — zero interaction with the JiMeng web interface
+- **No credential theft** — authentication via `dreamina login`, the official flow
+- **Personal use tool** — a convenience dashboard for your own account and files
+- **The CLI exists for this** — ByteDance published it for developers and creators to build workflows. This is that workflow.
 
-This project is not affiliated with ByteDance, JiMeng, or Dreamina. It is an independent open-source tool that enhances the experience of using the official CLI.
+Not affiliated with ByteDance, JiMeng, or Dreamina. Independent open-source tool.
+
+---
+
+## Support & Community
+
+- **Telegram:** [Join @voogieboogie](https://t.me/voogieboogie)
+- **Issues:** [GitHub Issues](https://github.com/Cameraptor/Dreamina-CLI-Monitor-For-Jimeng-/issues)
+- **Website:** [cameraptor.com/voogie](https://cameraptor.com/voogie)
 
 ---
 
@@ -383,11 +392,19 @@ MIT License — see [LICENSE](LICENSE) file for details.
 
 ---
 
-**Made with raptor energy by Voogie**
+## 致即梦团队和中国用户
 
-[![Telegram](https://img.shields.io/badge/Join_Telegram_Community-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/voogieboogie)
+我们对即梦（JiMeng）团队和字节跳动怀有最深的敬意与感谢。
 
-Star this repo if you find it useful!
+Seedance 2.0 是当今世界上最令人印象深刻的 AI 视频生成模型之一。它所展现的技术实力、创新速度和对创作者的赋能，代表了中国科技领域最前沿的成就。
+
+即梦平台以无与伦比的性价比，将世界级的 AI 能力带给了全球创作者。官方 CLI 工具的开放精神，让开发者能够自由构建工作流，这正是我们创建 Dreamina Monitor 的灵感来源。
+
+我们向即梦团队的工程师、研究员和设计师致以崇高的敬意。向中国用户社区致敬——你们的创意和反馈推动着这项技术不断进步。
+
+感谢中国在人工智能领域的卓越贡献和技术领导力。你们正在塑造未来。
+
+**谢谢。** 🙏
 
 ---
 
@@ -395,4 +412,12 @@ Star this repo if you find it useful!
   <a href="https://cameraptor.com/voogie">
     <img src="assets/cameraptor_logo.png" alt="Cameraptor" width="280">
   </a>
+</p>
+
+<p align="center">
+  <em>We're a team of passionate artist-researchers creating bespoke projects<br>at the intersection of art and cutting-edge technology.</em>
+</p>
+
+<p align="center">
+  <em>Where boundaries end, we build portals.</em>
 </p>
