@@ -1,0 +1,16 @@
+# Runtime data (created by the app)
+monitor-settings.json
+task-inputs.json
+hidden-tasks.json
+liked-tasks.json
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
