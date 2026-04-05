@@ -20,7 +20,7 @@ JiMeng offers [an official CLI](https://jimeng.jianying.com/cli) that unlocks th
 
 **Dreamina Monitor gives the CLI its eyes.**
 
-Now combine this with **AI coding agents** (Claude Code, Cursor, Windsurf) that can write expert Seedance 2.0 prompts automatically using our included `seedance` prompt skill — and you get the most powerful, most convenient, and most affordable AI video production pipeline available today.
+Now combine this with **AI coding agents** (Cursor, Windsurf, Codex, any IDE agent) that can write expert Seedance 2.0 prompts automatically using our included `seedance` prompt skill — and you get the most powerful, most convenient, and most affordable AI video production pipeline available today.
 
 ```
 Agent writes prompt → CLI submits to JiMeng → Monitor shows it live → You review like a director
@@ -235,11 +235,11 @@ You (in IDE) → AI Agent → Dreamina CLI → JiMeng API
 
 ### Works With Any Agent or IDE
 
-Claude Code, Cursor, Windsurf, GitHub Copilot, Codex CLI — anything that can run shell commands. The `seedance` and `dreamina` skills are included for Claude Code users.
+Cursor, Windsurf, GitHub Copilot, Codex CLI — anything that can run shell commands. The `seedance` and `dreamina` skills work with any agent that supports custom skill files.
 
 ---
 
-## Included Skills (for Claude Code)
+## Included AI Agent Skills
 
 ### Seedance Prompt Skill (`skills/seedance/`)
 
