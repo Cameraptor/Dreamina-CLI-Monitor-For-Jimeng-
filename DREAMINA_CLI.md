@@ -268,7 +268,11 @@ dreamina image_upscale --image=./photo.jpg --resolution_type=4k
 dreamina image_upscale --image=./photo.jpg --resolution_type=8k --poll=120
 ```
 
-**Варианты:** `2k` (бесплатно), `4k`, `8k` (VIP)
+**Варианты:** `2k` (1 кредит), `4k` (0 кредитов, VIP — лучший выбор), `8k` (VIP, цена не проверена)
+
+> **Известный баг CLI (2026-04-07):** `query_result` для задач `image_upscale` навсегда возвращает `querying`, даже когда результат готов на сайте jimeng.jianying.com. Причина: CLI полит по `submit_id`, а API апскейлинга индексирует результат по `history_record_id`. Загрузить через `--download_dir` невозможно. Скачивать вручную с сайта.
+>
+> **Всегда используй 4K** — для VIP это бесплатно (0 кредитов), а 2K стоит 1 кредит.
 
 ---
 
