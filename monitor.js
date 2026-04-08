@@ -2,7 +2,7 @@ const http = require('http');
 const https = require('https');
 const net = require('net');
 const os = require('os');
-const { exec, execSync } = require('child_process');
+const { exec } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
@@ -33,6 +33,9 @@ const FAVICON_BUF = Buffer.from("iVBORw0KGgoAAAANSUhEUgAABREAAAURCAYAAAAYAsQfAAA
 const DEFAULT_SETTINGS = { downloadDir: path.join(HOME, 'Downloads'), refreshInterval: 15000, soundEnabled: true, notificationsEnabled: false };
 const CLI_LOGS_DIR = path.join(HOME, '.dreamina_cli', 'logs');
 
+// ─── PERFORMANCE: result cache for completed tasks ──────────────────────────
+const resultCache = new Map();
+
 // ─── AUTO-TRACK: watch CLI logs for new submissions ─────────────────────────
 
 function readInputs() {
@@ -52,6 +55,37 @@ function readLiked() {
 }
 function writeLiked(list) {
   fs.writeFileSync(LIKED_FILE, JSON.stringify(list, null, 2));
+}
+
+// ─── Async versions of read/write helpers (for request handlers) ────────────
+async function readInputsAsync() {
+  try { return JSON.parse(await fs.promises.readFile(INPUTS_FILE, 'utf8')); } catch { return {}; }
+}
+async function writeInputsAsync(map) {
+  await fs.promises.writeFile(INPUTS_FILE, JSON.stringify(map, null, 2));
+}
+async function readHiddenAsync() {
+  try { return JSON.parse(await fs.promises.readFile(HIDDEN_FILE, 'utf8')); } catch { return []; }
+}
+async function writeHiddenAsync(list) {
+  await fs.promises.writeFile(HIDDEN_FILE, JSON.stringify(list, null, 2));
+}
+async function readLikedAsync() {
+  try { return JSON.parse(await fs.promises.readFile(LIKED_FILE, 'utf8')); } catch { return []; }
+}
+async function writeLikedAsync(list) {
+  await fs.promises.writeFile(LIKED_FILE, JSON.stringify(list, null, 2));
+}
+async function readSettingsAsync() {
+  try {
+    const saved = JSON.parse(await fs.promises.readFile(SETTINGS_FILE, 'utf8'));
+    const merged = Object.assign({}, DEFAULT_SETTINGS, saved);
+    if (merged.downloadDir && !fs.existsSync(merged.downloadDir)) merged.downloadDir = DEFAULT_SETTINGS.downloadDir;
+    return merged;
+  } catch { return { ...DEFAULT_SETTINGS }; }
+}
+async function writeSettingsAsync(data) {
+  await fs.promises.writeFile(SETTINGS_FILE, JSON.stringify(data, null, 2), 'utf8');
 }
 
 // ── Migration: task-timestamps.json → task-inputs.json (runs once on startup)
@@ -126,7 +160,7 @@ function processLogLine(line) {
   // Step 1: capture SubmitTask with all metadata (submit_id not yet known)
   const submit = parseSubmitFromLine(line);
   if (submit && submit.logid) {
-    pendingSubmits[submit.logid] = submit;
+    pendingSubmits[submit.logid] = { ...submit, _ts: Date.now() };
     return;
   }
 
@@ -153,43 +187,58 @@ function processLogLine(line) {
   }
 }
 
-function pollLogs() {
-  const latest = getLatestLog();
-  if (!latest) return;
-
-  // If log file changed, reset offset
-  if (latest !== logWatchState.file) {
-    logWatchState.file = latest;
-    logWatchState.offset = 0;
-    // On first read, skip to end (don't reprocess old logs)
-    try {
-      const stat = fs.statSync(latest);
-      logWatchState.offset = stat.size;
-    } catch {}
-    return;
-  }
-
+let pollRunning = false;
+async function pollLogs() {
+  if (pollRunning) return;
+  pollRunning = true;
   try {
-    const stat = fs.statSync(latest);
-    if (stat.size <= logWatchState.offset) return;
+    const latest = getLatestLog();
+    if (!latest) return;
 
-    const stream = fs.createReadStream(latest, { start: logWatchState.offset, encoding: 'utf8' });
-    let buffer = '';
-    stream.on('data', chunk => { buffer += chunk; });
-    stream.on('end', () => {
-      logWatchState.offset = stat.size;
-      const lines = buffer.split('\n');
-      lines.forEach(line => {
-        if (line.trim()) processLogLine(line);
+    // If log file changed, reset offset
+    if (latest !== logWatchState.file) {
+      logWatchState.file = latest;
+      logWatchState.offset = 0;
+      // On first read, skip to end (don't reprocess old logs)
+      try {
+        const stat = await fs.promises.stat(latest);
+        logWatchState.offset = stat.size;
+      } catch {}
+      return;
+    }
+
+    try {
+      const stat = await fs.promises.stat(latest);
+      if (stat.size <= logWatchState.offset) return;
+
+      const stream = fs.createReadStream(latest, { start: logWatchState.offset, encoding: 'utf8' });
+      let buffer = '';
+      stream.on('data', chunk => { buffer += chunk; });
+      stream.on('end', () => {
+        logWatchState.offset = stat.size;
+        const lines = buffer.split('\n');
+        lines.forEach(line => {
+          if (line.trim()) processLogLine(line);
+        });
       });
-    });
-  } catch {}
+    } catch {}
+  } finally {
+    pollRunning = false;
+  }
 }
 
 // Poll every 3 seconds
 setInterval(pollLogs, 3000);
 // Initial poll
 setTimeout(pollLogs, 1000);
+
+// Cleanup stale pendingSubmits entries (older than 1 hour) every 10 minutes
+setInterval(() => {
+  const cutoff = Date.now() - 3600000;
+  for (const id of Object.keys(pendingSubmits)) {
+    if (pendingSubmits[id]._ts < cutoff) delete pendingSubmits[id];
+  }
+}, 600000);
 
 // ─── SETUP / ONBOARDING ─────────────────────────────────────────────────────
 
@@ -363,9 +412,9 @@ function estimateCredits(model, duration, taskType) {
   const t = (taskType || '').toLowerCase();
   const d = Number(duration) || 0;
 
-  // Image upscale: 4K = 0 credits (VIP free), 2K = 1 credit
+  // Image upscale: 2K = 1cr, 4K = 2cr (verified 2026-04-07 from live API)
   // Real price from commerce_info takes priority when available
-  if (t === 'image_upscale') return 1;
+  if (t === 'image_upscale') return 2;
 
   // Image generation
   if (t === 'text2image' || t === 'image2image') return 10;
@@ -396,17 +445,39 @@ function isActiveStatus(s) { return s === 'querying' || s === 'submit'; }
 async function getStatus() {
   const tasks = await run('"' + DREAMINA + '" list_task --limit=200');
   if (!tasks || !Array.isArray(tasks)) return [];
+  const inputMap = readInputs();
+  const hiddenList = readHidden();
+  const hiddenSet = new Set(hiddenList);
   const seen = new Set();
   const unique = tasks.filter(t => {
     if (!t.submit_id || seen.has(t.submit_id)) return false;
+    if (hiddenSet.has(t.submit_id)) return false; // skip hidden BEFORE query_result
     seen.add(t.submit_id);
     return ['querying', 'success', 'fail', 'submit'].includes(t.gen_status);
   });
-  const detailed = await Promise.all(
-    unique.map(t => run('"' + DREAMINA + '" query_result --submit_id=' + t.submit_id))
+  // Split into active (need fresh data) and completed (can use cache)
+  const active = unique.filter(t => isActiveStatus(t.gen_status));
+  const completed = unique.filter(t => !isActiveStatus(t.gen_status));
+  const uncachedCompleted = completed.filter(t => !resultCache.has(t.submit_id));
+
+  // query_result only for active tasks + uncached completed tasks
+  const toQuery = active.concat(uncachedCompleted);
+  const queried = await Promise.all(
+    toQuery.map(t => run('"' + DREAMINA + '" query_result --submit_id=' + t.submit_id))
   );
-  const inputMap = readInputs();
-  const hiddenList = readHidden();
+
+  // Cache newly-fetched completed results
+  const queryMap = new Map();
+  toQuery.forEach((t, i) => { queryMap.set(t.submit_id, queried[i]); });
+  uncachedCompleted.forEach(t => {
+    if (queryMap.has(t.submit_id)) resultCache.set(t.submit_id, queryMap.get(t.submit_id));
+  });
+
+  // Build detailed array in same order as unique
+  const detailed = unique.map(t => {
+    if (queryMap.has(t.submit_id)) return queryMap.get(t.submit_id);
+    return resultCache.get(t.submit_id) || null;
+  });
   let inputsDirty = false;
   const now = Date.now();
   const result_list = unique.map((li, i) => {
@@ -439,7 +510,10 @@ async function getStatus() {
       }
     }
     if (!inputMap[li.submit_id]) {
-      inputMap[li.submit_id] = { discovered_at: now };
+      // Only set discovered_at for tasks still active (querying/submit).
+      // Already-completed tasks are old — no timestamp prevents them from
+      // appearing as "today" in credit counts and sort order.
+      inputMap[li.submit_id] = isActiveStatus(status) ? { discovered_at: now } : {};
       tracked = inputMap[li.submit_id];
       inputsDirty = true;
     }
@@ -505,7 +579,11 @@ function getDrives() {
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let body = '';
-    req.on('data', chunk => { body += chunk; });
+    const MAX = 1024 * 1024; // 1MB
+    req.on('data', chunk => {
+      body += chunk;
+      if (body.length > MAX) { req.destroy(); reject(new Error('Body too large')); }
+    });
     req.on('end', () => { try { resolve(JSON.parse(body)); } catch { resolve({}); } });
     req.on('error', reject);
   });
@@ -1282,7 +1360,7 @@ const HTML = [
 '          <tr><td class="mono">text2image</td><td>2</td><td>Model 5.0 default, up to 4K</td></tr>',
 '          <tr><td class="mono">image2image</td><td>2</td><td>Model 5.0 default</td></tr>',
 '          <tr><td class="mono">image_upscale 2k</td><td>1</td><td>All users</td></tr>',
-'          <tr style="background:rgba(33,193,52,.05)"><td class="mono" style="color:var(--green)">image_upscale 4k</td><td>0</td><td>Free for VIP &mdash; best value</td></tr>',
+'          <tr><td class="mono">image_upscale 4k</td><td>2</td><td>VIP only</td></tr>',
 '          <tr><td class="mono">image_upscale 8k</td><td>?</td><td>VIP only (unverified)</td></tr>',
 '        </table>',
 '      </div>',
@@ -1437,7 +1515,8 @@ const HTML = [
 'var refreshInterval = 30000;',
 'var likedTasks = {};',
 'var spentPeriod = "today";',
-'function isActive(t) { return isActive(t); }',
+'var serverSpent = { today: 0, week: 0, all: 0 };',
+'function isActive(t) { return t.status === "querying" || t.status === "submit"; }',
 '',
 '// ── SVG icons (no Unicode emoji)',
 'var IC = {',
@@ -1559,7 +1638,8 @@ const HTML = [
 '      credEl.textContent = Number(creds.total).toLocaleString() + " cr";',
 '      credEl.style.display = "inline-flex";',
 '    }',
-'    // Spent by period',
+'    // Spent by period (server-side, includes hidden tasks)',
+'    if (creds) { serverSpent = { today: creds.spent_today || 0, week: creds.spent_week || 0, all: creds.spent_all || 0 }; }',
 '    updateSpent();',
 '  }).catch(function(e) { console.error(e); }).then(function() {',
 '    fetching = false; btn.textContent = "Refresh";',
@@ -1567,43 +1647,16 @@ const HTML = [
 '}',
 '',
 '// ── Spent period',
-'function calcSpent(period) {',
-'  var now = Date.now();',
-'  var cutoff = 0;',
-'  if (period === "today") {',
-'    var d = new Date(); d.setHours(0,0,0,0); cutoff = d.getTime();',
-'  } else if (period === "7d") {',
-'    cutoff = now - 7 * 24 * 60 * 60 * 1000;',
-'  }',
-'  var total = 0;',
-'  var count = 0;',
-'  allTasks.forEach(function(t) {',
-'    if (t.credits > 0 && !t.ghost) {',
-'      if (cutoff === 0) {',
-'        total += t.credits;',
-'        count++;',
-'      } else {',
-'        var ts = t.submitted_at || t.discovered_at || 0;',
-'        if (ts && ts >= cutoff) {',
-'          total += t.credits;',
-'          count++;',
-'        }',
-'      }',
-'    }',
-'  });',
-'  return { total: total, count: count };',
-'}',
 'function updateSpent() {',
-'  var s = calcSpent(spentPeriod);',
-'  var all = calcSpent("all");',
-'  var today = calcSpent("today");',
-'  var week = calcSpent("7d");',
+'  var today = serverSpent.today;',
+'  var week = serverSpent.week;',
+'  var all = serverSpent.all;',
+'  var s = spentPeriod === "today" ? today : spentPeriod === "7d" ? week : all;',
 '  var spentEl = document.getElementById("spentEl");',
 '  var spentText = document.getElementById("spentText");',
-'  if (all.total > 0) {',
-'    var label = spentPeriod === "today" ? "today" : spentPeriod === "7d" ? "7d" : "all";',
-'    spentText.textContent = "-" + s.total + " cr";',
-'    spentEl.title = "Today: -" + today.total + " (" + today.count + " tasks)\\n7 days: -" + week.total + " (" + week.count + " tasks)\\nAll visible: -" + all.total + " (" + all.count + " tasks)";',
+'  if (all > 0) {',
+'    spentText.textContent = "-" + s + " cr";',
+'    spentEl.title = "Today: -" + today + " cr\\n7 days: -" + week + " cr\\nAll time: -" + all + " cr";',
 '    spentEl.style.display = "inline-flex";',
 '  }',
 '}',
@@ -1620,25 +1673,21 @@ const HTML = [
 '',
 'function sortTasks(tasks) {',
 '  function taskTs(t) { return t.submitted_at || t.discovered_at || 0; }',
-'  if (sortOrder === "newest") {',
-'    return tasks.sort(function(a, b) {',
-'      if (a.ghost !== b.ghost) return a.ghost ? 1 : -1;',
-'      return taskTs(b) - taskTs(a);',
-'    });',
+'  function cmp(a, b, asc) {',
+'    if (a.ghost !== b.ghost) return a.ghost ? 1 : -1;',
+'    var d = asc ? taskTs(a) - taskTs(b) : taskTs(b) - taskTs(a);',
+'    return d !== 0 ? d : (a.submit_id < b.submit_id ? -1 : a.submit_id > b.submit_id ? 1 : 0);',
 '  }',
-'  if (sortOrder === "oldest") {',
-'    return tasks.sort(function(a, b) {',
-'      if (a.ghost !== b.ghost) return a.ghost ? 1 : -1;',
-'      return taskTs(a) - taskTs(b);',
-'    });',
-'  }',
+'  if (sortOrder === "newest") return tasks.sort(function(a, b) { return cmp(a, b, false); });',
+'  if (sortOrder === "oldest") return tasks.sort(function(a, b) { return cmp(a, b, true); });',
 '  var order = { querying: 0, success: 1, fail: 2 };',
 '  return tasks.sort(function(a, b) {',
 '    if (a.ghost !== b.ghost) return a.ghost ? 1 : -1;',
 '    var oa = order[a.status] !== undefined ? order[a.status] : 3;',
 '    var ob = order[b.status] !== undefined ? order[b.status] : 3;',
 '    if (oa !== ob) return oa - ob;',
-'    return taskTs(b) - taskTs(a);',
+'    var d = taskTs(b) - taskTs(a);',
+'    return d !== 0 ? d : (a.submit_id < b.submit_id ? -1 : a.submit_id > b.submit_id ? 1 : 0);',
 '  });',
 '}',
 'function setSortOrder(v) {',
@@ -1667,10 +1716,14 @@ const HTML = [
 '}',
 '',
 '// ── Type filter dropdown',
+'var lastTypeKeys = "";',
 'function updateTypeFilters() {',
 '  var types = {};',
 '  allTasks.forEach(function(t) { if (t.task_type && !t.ghost) types[t.task_type] = true; });',
 '  var keys = Object.keys(types).sort();',
+'  var sig = keys.join(",") + "|" + typeFilter;',
+'  if (sig === lastTypeKeys) return;',
+'  lastTypeKeys = sig;',
 '  var el = document.getElementById("typeSelect");',
 '  if (!el) return;',
 '  var h = \'<option value="all">All types</option>\';',
@@ -2799,6 +2852,21 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/api/credits') {
     try {
       const data = await getCredits();
+      // Calculate real spent from ALL tasks (including hidden) using task-inputs.json
+      const inputMap = readInputs();
+      const now = Date.now();
+      const todayCutoff = new Date(); todayCutoff.setHours(0,0,0,0);
+      const weekCutoff = now - 7 * 24 * 60 * 60 * 1000;
+      let spentToday = 0, spentWeek = 0, spentAll = 0;
+      for (const [sid, t] of Object.entries(inputMap)) {
+        const cr = t.credits || 0;
+        if (cr <= 0) continue;
+        spentAll += cr;
+        const ts = t.submitted_at || t.discovered_at || 0;
+        if (ts >= todayCutoff.getTime()) spentToday += cr;
+        if (ts >= weekCutoff) spentWeek += cr;
+      }
+      if (data) { data.spent_today = spentToday; data.spent_week = spentWeek; data.spent_all = spentAll; }
       res.writeHead(200, { 'Content-Type': 'application/json', ...cors });
       res.end(JSON.stringify(data));
     } catch (e) {
@@ -2813,9 +2881,9 @@ const server = http.createServer(async (req, res) => {
     const body = await readBody(req);
     const { submit_id } = body;
     if (!submit_id) { res.writeHead(400, cors); res.end('Need submit_id'); return; }
-    const list = readHidden();
+    const list = await readHiddenAsync();
     if (list.indexOf(submit_id) === -1) list.push(submit_id);
-    writeHidden(list);
+    await writeHiddenAsync(list);
     res.writeHead(200, { 'Content-Type': 'application/json', ...cors });
     res.end(JSON.stringify({ ok: true, hidden: list.length }));
     return;
@@ -2830,7 +2898,7 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ ok: false, error: 'Need submit_id' }));
       return;
     }
-    const map = readInputs();
+    const map = await readInputsAsync();
     const entry = map[submit_id] || {};
     if (Array.isArray(files)) entry.files = files;
     if (model) entry.model = model;
@@ -2838,7 +2906,7 @@ const server = http.createServer(async (req, res) => {
     if (duration) entry.duration = duration;
     if (!entry.submitted_at) entry.submitted_at = Date.now();
     map[submit_id] = entry;
-    saveInputs(map);
+    await writeInputsAsync(map);
     res.writeHead(200, { 'Content-Type': 'application/json', ...cors });
     res.end(JSON.stringify({ ok: true }));
     return;
@@ -2860,7 +2928,7 @@ const server = http.createServer(async (req, res) => {
     const resolved = path.resolve(normalizedPath.replace(/\//g, path.sep));
     // Security: only serve media files from known directories
     // Localhost-only: allow HOME dirs + any path from task-inputs.json (user's own files)
-    const inputDirs = Object.values(readInputs()).flatMap(function(t) { return (t.files || []).map(function(f) { return path.dirname(path.resolve(f)).toLowerCase(); }); });
+    const inputDirs = Object.values(await readInputsAsync()).flatMap(function(t) { return (t.files || []).map(function(f) { return path.dirname(path.resolve(f)).toLowerCase(); }); });
     const safePrefixes = [HOME, path.join(HOME, 'Downloads'), path.join(HOME, 'Pictures'), path.join(HOME, 'Desktop'), os.tmpdir()].map(function(p) { return path.resolve(p).toLowerCase(); }).concat(inputDirs);
     const isSafe = safePrefixes.some(function(p) { return resolved.toLowerCase().startsWith(p); });
     const safeExts = ['.jpg','.jpeg','.png','.webp','.gif','.bmp','.mp4','.mov','.webm','.avi','.mkv'];
@@ -2868,7 +2936,7 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(403, cors); res.end('Forbidden'); return;
     }
     try {
-      const stat = fs.statSync(resolved);
+      const stat = await fs.promises.stat(resolved);
       if (!stat.isFile() || stat.size > 50 * 1024 * 1024) { res.writeHead(404); res.end('Not found'); return; }
       const ext = path.extname(resolved).toLowerCase();
       const mime = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif', '.bmp': 'image/bmp', '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm', '.avi': 'video/x-msvideo', '.mkv': 'video/x-matroska' }[ext] || 'application/octet-stream';
@@ -2921,11 +2989,11 @@ const server = http.createServer(async (req, res) => {
     const body = await readBody(req);
     const { submit_id } = body;
     if (!submit_id) { res.writeHead(400, cors); res.end('Need submit_id'); return; }
-    const list = readLiked();
+    const list = await readLikedAsync();
     const idx = list.indexOf(submit_id);
     if (idx === -1) list.push(submit_id);
     else list.splice(idx, 1);
-    writeLiked(list);
+    await writeLikedAsync(list);
     res.writeHead(200, { 'Content-Type': 'application/json', ...cors });
     res.end(JSON.stringify({ ok: true, liked: idx === -1, count: list.length }));
     return;
@@ -2945,8 +3013,8 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'POST' && req.url === '/api/settings') {
     const body = await readBody(req);
-    const updated = Object.assign({}, readSettings(), body);
-    writeSettings(updated);
+    const updated = Object.assign({}, await readSettingsAsync(), body);
+    await writeSettingsAsync(updated);
     res.writeHead(200, { 'Content-Type': 'application/json', ...cors });
     res.end(JSON.stringify({ ok: true }));
     return;
@@ -2955,11 +3023,13 @@ const server = http.createServer(async (req, res) => {
   // ─── HEALTH & SETUP ENDPOINTS ──────────────────────────────────────────────
   if (req.method === 'GET' && req.url === '/api/health') {
     var cliVer = '';
-    try { cliVer = execSync('"' + DREAMINA + '" --version', { env: ENV, timeout: 5000 }).toString().trim(); } catch {}
+    try {
+      var verResult = await runRaw('"' + DREAMINA + '" --version');
+      cliVer = verResult.ok ? verResult.stdout.trim() : '';
+    } catch {}
     var creditInfo = null;
     try {
-      var out = execSync('"' + DREAMINA + '" user_credit', { env: ENV, timeout: 10000 }).toString();
-      creditInfo = JSON.parse(out);
+      creditInfo = await run('"' + DREAMINA + '" user_credit');
     } catch {}
     res.writeHead(200, { 'Content-Type': 'application/json', ...cors });
     res.end(JSON.stringify({
