@@ -38,7 +38,7 @@ dreamina-toolkit/
 
 ---
 
-## v1.0 — Current (2026-04-04)
+## v1.0 — Done (2026-04-04)
 
 Single-file Node.js dashboard. Windows only. Всё работает.
 
@@ -87,6 +87,23 @@ Single-file Node.js dashboard. Windows only. Всё работает.
 
 **Нет нужды в webapp/Electron.** Node.js + браузер = кроссплатформа нативно.
 Dreamina CLI сам по себе кроссплатформенный (Win/Mac/Linux бинарник).
+
+---
+
+## v1.2.1 — Current (2026-04-18)
+
+CLI 1.4.1 compatibility + performance hardening. Session артефакты: `.agent/tasks/cli-1.4.1-compat/`.
+
+### Done
+- [x] Dreamina CLI 1.4.1 support — OAuth Device Flow login, new `list_task` shape (no `video_url` → `query_result` only), `credit_count` path changes, `triplets[].benefit_type` as source of truth
+- [x] Fail/querying task normalizer — safe render when `result_json` is absent
+- [x] Version parity banner — warns on unfamiliar CLI versions (KNOWN_COMPAT list)
+- [x] Persistent result cache — `result-cache.json` survives restarts, warm start 14s → 10s (−28%)
+- [x] Stuck-querying auto-hide — 15min yellow badge, 90min auto-hide via persistent `discovered_at` (survives reboots)
+- [x] Bounded CLI concurrency — max 5 parallel `query_result` spawns, exponential backoff 1s → 30s on errors
+- [x] Path sanitization guidance in skill — prevents zombie tasks from spaces/non-ASCII paths
+- [x] Updated Seedance pricing table (VIP 15s 720p = 210cr, 1080p = 495cr, VIP-fast = 165cr)
+- [x] Seedance skill v2 — Virtual Portrait Library, on-screen text, character/storyboard sheets, Eight Core Elements, interactive multi-choice audit
 
 ---
 
