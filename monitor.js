@@ -2,7 +2,7 @@ const http = require('http');
 const https = require('https');
 const net = require('net');
 const os = require('os');
-const { exec } = require('child_process');
+const { exec, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
@@ -110,7 +110,7 @@ function migrateTimestamps() {
   }
 }
 
-let logWatchState = { file: null, offset: 0 };
+let logWatchState = { file: null, offset: 0, initialized: false };
 
 function getTodayLogDir() {
   const d = new Date();
@@ -157,11 +157,12 @@ function parseSubmitIdFromLine(line) {
 let pendingSubmits = {};
 
 function processLogLine(line) {
-  // Step 1: capture SubmitTask with all metadata (submit_id not yet known)
+  // Step 1: capture SubmitTask with all metadata (submit_id may not be known yet)
+  // Do NOT return early — the "finished" log line contains both [SubmitTask] and
+  // the real submit_id, so Step 2 must also run on the same line.
   const submit = parseSubmitFromLine(line);
   if (submit && submit.logid) {
     pendingSubmits[submit.logid] = { ...submit, _ts: Date.now() };
-    return;
   }
 
   // Step 2: once submit_id appears (in upload or query lines), match by logid
@@ -195,16 +196,20 @@ async function pollLogs() {
     const latest = getLatestLog();
     if (!latest) return;
 
-    // If log file changed, reset offset
     if (latest !== logWatchState.file) {
       logWatchState.file = latest;
       logWatchState.offset = 0;
-      // On first read, skip to end (don't reprocess old logs)
-      try {
-        const stat = await fs.promises.stat(latest);
-        logWatchState.offset = stat.size;
-      } catch {}
-      return;
+      if (!logWatchState.initialized) {
+        // First startup: skip to end — don't reprocess logs from before monitor started.
+        try {
+          const stat = await fs.promises.stat(latest);
+          logWatchState.offset = stat.size;
+        } catch {}
+        logWatchState.initialized = true;
+        return;
+      }
+      // New log file during runtime: read from beginning to catch submissions
+      // made before the first poll cycle hit this file.
     }
 
     try {
@@ -242,7 +247,7 @@ setInterval(() => {
 
 // ─── SETUP / ONBOARDING ─────────────────────────────────────────────────────
 
-let setupState = { step: 'checking', error: null, progress: 0 };
+let setupState = { step: 'checking', error: null, progress: 0, verification_uri: null, user_code: null };
 
 function hasDreamina() { try { fs.accessSync(DREAMINA); return true; } catch { return false; } }
 
@@ -280,6 +285,8 @@ async function installDreamina() {
 }
 
 function checkLogin() {
+  // Bypass backoff for this check — we're specifically trying to detect
+  // login state regardless of prior failures.
   return new Promise((resolve) => {
     exec('"' + DREAMINA + '" user_credit', { env: ENV, timeout: 15000 }, (err, stdout) => {
       try {
@@ -291,22 +298,125 @@ function checkLogin() {
   });
 }
 
+// ─── LOGIN UX (§6.5) ─────────────────────────────────────────────────────────
+// CLI 1.4.1 uses OAuth Device Flow. It prints verification_uri, user_code,
+// and device_code to stdout, then polls until the user authorizes.
+// We spawn the command, stream stdout, parse those three fields, expose
+// them via setupState so the UI banner can show a clickable link + code.
+let loginProc = null;
+let loginStream = '';
+const LOGIN_URI_RX = /verification_uri(?:_complete)?\s*[:：]\s*(https?:\/\/\S+)/i;
+const LOGIN_CODE_RX = /user_code\s*[:：]\s*([A-Za-z0-9_\-]+)/i;
+const LOGIN_DEVICE_RX = /device_code\s*[:：]\s*([A-Za-z0-9_\-]+)/i;
+
 function startLogin() {
-  setupState = { step: 'login', error: null, progress: 80 };
-  exec('"' + DREAMINA + '" login', { env: ENV }, () => {});
+  if (loginProc) {
+    // already running — don't spawn twice
+    return;
+  }
+  setupState = { step: 'login', error: null, progress: 80, verification_uri: null, user_code: null };
+  loginStream = '';
+  try {
+    loginProc = spawn(DREAMINA, ['login'], { env: ENV });
+  } catch (e) {
+    setupState.error = 'Failed to spawn login: ' + e.message;
+    loginProc = null;
+    return;
+  }
+  loginProc.stdout.on('data', function(chunk) {
+    const s = String(chunk);
+    loginStream += s;
+    if (loginStream.length > 64 * 1024) loginStream = loginStream.slice(-32 * 1024);
+    const uriM = loginStream.match(LOGIN_URI_RX);
+    const codeM = loginStream.match(LOGIN_CODE_RX);
+    if (uriM && !setupState.verification_uri) {
+      setupState.verification_uri = uriM[1].replace(/[\s,;].*$/, '');
+      console.log('[login] verification_uri = ' + setupState.verification_uri);
+    }
+    if (codeM && !setupState.user_code) {
+      setupState.user_code = codeM[1];
+      console.log('[login] user_code = ' + setupState.user_code);
+    }
+  });
+  loginProc.stderr.on('data', function(chunk) {
+    const s = String(chunk);
+    // Surface only the first meaningful stderr line so UI can show it
+    if (!setupState.error && s.trim()) setupState.error = s.trim().split('\n')[0].slice(0, 240);
+  });
+  loginProc.on('close', function(code) {
+    loginProc = null;
+    // If login exited cleanly → user_credit will return valid next tick.
+    // Kick a checkLogin immediately for snappier UI transition.
+    checkLogin().then(function(ok) {
+      if (ok) {
+        setupState = { step: 'ready', error: null, progress: 100 };
+        cliBackoffReset('user_credit');
+      } else if (setupState.step === 'login') {
+        // stayed in login but process ended — likely timeout. Offer retry.
+        setupState.error = setupState.error || ('login process exited (code=' + code + ')');
+      }
+    });
+  });
+}
+
+// Called periodically while setupState.step === 'login' to detect auth
+function pollLoginStatus() {
+  if (setupState.step !== 'login') return;
+  checkLogin().then(function(ok) {
+    if (ok) {
+      setupState = { step: 'ready', error: null, progress: 100 };
+      try { if (loginProc) loginProc.kill(); } catch {}
+      loginProc = null;
+      cliBackoffReset('user_credit');
+      healthState.account.loggedIn = true;
+    }
+  });
+}
+setInterval(pollLoginStatus, 3000);
+
+// ─── VERSION BANNER (§6.6) ───────────────────────────────────────────────────
+// Read ~/.dreamina_cli/version.json on boot + on demand, compare to the list
+// of versions this monitor was tested against. Mismatch → UI warning.
+const KNOWN_COMPAT = ['1.4.1'];
+let cliVersionInfo = { file: null, build: null, compat: 'unknown' };
+function readCliVersionFile() {
+  try {
+    const p = path.join(HOME, '.dreamina_cli', 'version.json');
+    const raw = fs.readFileSync(p, 'utf8');
+    const j = JSON.parse(raw);
+    return j.version || j.semver || null;
+  } catch { return null; }
+}
+async function readCliBuildVersion() {
+  const r = await cliExec('version', [], { timeout: 8000, backoffKey: 'version', parseJson: true, respectBackoff: false });
+  if (r.data && r.data.version) return r.data.version;
+  if (r.stdout) {
+    try { const j = JSON.parse(r.stdout); return j.version || null; } catch {}
+    return r.stdout.trim().split('\n')[0].slice(0, 64);
+  }
+  return null;
+}
+async function refreshVersionInfo() {
+  const fileVer = readCliVersionFile();
+  const buildVer = await readCliBuildVersion();
+  let compat = 'unknown';
+  if (fileVer) compat = KNOWN_COMPAT.indexOf(fileVer) !== -1 ? 'ok' : 'warn';
+  cliVersionInfo = { file: fileVer, build: buildVer, compat: compat };
 }
 
 async function runSetup() {
-  setupState = { step: 'checking', error: null, progress: 10 };
+  setupState = { step: 'checking', error: null, progress: 10, verification_uri: null, user_code: null };
   if (!hasDreamina()) {
     await installDreamina();
     if (setupState.step === 'error') return;
   }
+  refreshVersionInfo().catch(function() {});
   const loggedIn = await checkLogin();
   if (loggedIn) {
-    setupState = { step: 'ready', error: null, progress: 100 };
+    setupState = { step: 'ready', error: null, progress: 100, verification_uri: null, user_code: null };
   } else {
-    setupState = { step: 'login', error: null, progress: 80 };
+    // Kick off Device Flow login — stdout parsing will populate setupState.
+    startLogin();
   }
 }
 
@@ -383,174 +493,442 @@ function writeSettings(data) {
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(data, null, 2), 'utf8');
 }
 
-function run(cmd) {
-  return new Promise((resolve) => {
-    exec(cmd, { env: ENV, maxBuffer: 4 * 1024 * 1024, timeout: 25000 }, (_err, stdout) => {
-      try { resolve(JSON.parse(stdout)); } catch { resolve(null); }
-    });
-  });
+// ─── CLI EXEC WRAPPER (§6.1) ─────────────────────────────────────────────────
+// Central chokepoint for all `dreamina` subprocess calls.
+//   - per-subcmd exponential backoff (1s → 2s → 5s → 15s → 30s cap)
+//   - consistent stderr logging on nonzero exit
+//   - records lastError by key for UI diagnostics banner
+const CLI_BACKOFF_STEPS = [1000, 2000, 5000, 15000, 30000];
+const cliBackoff = new Map();  // key → { nextAllowedTs, step, lastError }
+function cliBackoffGet(key) {
+  let s = cliBackoff.get(key);
+  if (!s) { s = { nextAllowedTs: 0, step: 0, lastError: null }; cliBackoff.set(key, s); }
+  return s;
 }
-function runRaw(cmd) {
-  return new Promise((resolve) => {
-    exec(cmd, { env: ENV, maxBuffer: 4 * 1024 * 1024, timeout: 60000 }, (err, stdout, stderr) => {
-      resolve({ ok: !err, stdout: stdout || '', stderr: stderr || '', code: err ? err.code : 0 });
+function cliBackoffReset(key) {
+  const s = cliBackoffGet(key);
+  s.step = 0; s.nextAllowedTs = 0; s.lastError = null;
+}
+function cliBackoffFail(key, msg) {
+  const s = cliBackoffGet(key);
+  const delay = CLI_BACKOFF_STEPS[Math.min(s.step, CLI_BACKOFF_STEPS.length - 1)];
+  s.nextAllowedTs = Date.now() + delay;
+  s.step = Math.min(s.step + 1, CLI_BACKOFF_STEPS.length - 1);
+  s.lastError = { msg: msg, ts: Date.now() };
+  console.error('[cli][backoff] ' + key + ' failed: ' + msg + ' — next allowed in ' + delay + 'ms');
+}
+function cliLastError(key) {
+  const s = cliBackoff.get(key);
+  return s ? s.lastError : null;
+}
+// Run `dreamina <subcmd> [args...]` with backoff + JSON parsing.
+// opts: { timeout, parseJson, backoffKey, respectBackoff }
+function cliExec(subcmd, args, opts) {
+  opts = opts || {};
+  const timeout = opts.timeout || 25000;
+  const parseJson = opts.parseJson !== false;
+  const key = opts.backoffKey || subcmd;
+  const respectBackoff = opts.respectBackoff !== false;
+  const state = cliBackoffGet(key);
+  const now = Date.now();
+  if (respectBackoff && state.nextAllowedTs > now) {
+    return Promise.resolve({ ok: false, data: null, stdout: '', stderr: 'backoff:' + (state.nextAllowedTs - now) + 'ms', code: -1, skipped: true });
+  }
+  const argList = [subcmd].concat(Array.isArray(args) ? args.filter(function(a) { return a !== undefined && a !== null && a !== ''; }) : []);
+  return new Promise(function(resolve) {
+    const proc = spawn(DREAMINA, argList, { env: ENV });
+    let stdout = '', stderr = '';
+    const MAX_BUF = 4 * 1024 * 1024;
+    let killed = false;
+    const timer = setTimeout(function() { killed = true; try { proc.kill(); } catch {} }, timeout);
+    proc.stdout.on('data', function(c) { stdout += c; if (stdout.length > MAX_BUF) { try { proc.kill(); } catch {} } });
+    proc.stderr.on('data', function(c) { stderr += c; if (stderr.length > MAX_BUF) { try { proc.kill(); } catch {} } });
+    proc.on('error', function(err) {
+      clearTimeout(timer);
+      cliBackoffFail(key, 'spawn_error:' + err.message);
+      resolve({ ok: false, data: null, stdout: stdout, stderr: stderr || err.message, code: -1 });
+    });
+    proc.on('close', function(code) {
+      clearTimeout(timer);
+      const ok = code === 0 && !killed;
+      let data = null;
+      if (parseJson && stdout) {
+        try { data = JSON.parse(stdout); } catch {}
+      }
+      if (!ok) {
+        const reason = killed ? 'timeout' : ('exit=' + code + (stderr ? ' stderr=' + stderr.trim().slice(0, 200) : ''));
+        cliBackoffFail(key, reason);
+      } else if (parseJson && !data) {
+        cliBackoffFail(key, 'nonjson_output');
+      } else {
+        cliBackoffReset(key);
+      }
+      resolve({ ok: ok, data: data, stdout: stdout, stderr: stderr, code: code });
     });
   });
 }
 
+// Legacy shims — kept so existing call sites compile. New code should use cliExec().
+function run(cmd) {
+  // Fallback for any straggler call site. Parse the command string into argv.
+  const m = cmd.match(/^"[^"]*"\s*(.*)$/);
+  const rest = m ? m[1] : cmd;
+  const parts = rest.match(/(?:[^\s"]+|"[^"]*")+/g) || [];
+  const subcmd = parts[0];
+  const args = parts.slice(1).map(function(p) { return p.replace(/^"|"$/g, ''); });
+  return cliExec(subcmd, args, { timeout: 25000 }).then(function(r) { return r.data; });
+}
+function runRaw(cmd) {
+  const m = cmd.match(/^"[^"]*"\s*(.*)$/);
+  const rest = m ? m[1] : cmd;
+  const parts = rest.match(/(?:[^\s"]+|"[^"]*")+/g) || [];
+  const subcmd = parts[0];
+  const args = parts.slice(1).map(function(p) { return p.replace(/^"|"$/g, ''); });
+  return cliExec(subcmd, args, { timeout: 60000, parseJson: false }).then(function(r) {
+    return { ok: r.ok, stdout: r.stdout, stderr: r.stderr, code: r.code };
+  });
+}
+
+// ─── CONCURRENCY POOL (§6.2) ─────────────────────────────────────────────────
+// Bounded parallel execution. Default N=5; configurable via monitor-settings.json
+function getQueryPoolSize() {
+  try {
+    const s = readSettings();
+    const n = parseInt(s.queryPoolSize, 10);
+    if (Number.isFinite(n) && n >= 1 && n <= 20) return n;
+  } catch {}
+  return 5;
+}
+async function runPool(items, fn, size) {
+  const N = size || getQueryPoolSize();
+  const results = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (true) {
+      const i = next++;
+      if (i >= items.length) return;
+      try { results[i] = await fn(items[i], i); } catch (e) { results[i] = null; }
+    }
+  }
+  const workers = [];
+  for (let k = 0; k < Math.min(N, items.length); k++) workers.push(worker());
+  await Promise.all(workers);
+  return results;
+}
+
 async function getCredits() {
-  const data = await run('"' + DREAMINA + '" user_credit');
+  const r = await cliExec('user_credit', [], { timeout: 15000, backoffKey: 'user_credit' });
+  const data = r.data;
   if (!data) return null;
   return { total: data.total_credit || 0, vip: data.vip_credit || 0, gift: data.gift_credit || 0, purchase: data.purchase_credit || 0 };
 }
 
-// Credit pricing table (verified 2026-04-04)
-// Video: model + duration → credits
-// Image/upscale: task_type → credits
-function estimateCredits(model, duration, taskType) {
+// ─── PRICING (§6.7) ──────────────────────────────────────────────────────────
+// Verified 2026-04-18 against live CLI 1.4.1. Used only as a fallback when
+// commerce_info.credit_count is absent (gen_status=querying typically).
+// Numbers are 15s reference points; shorter durations scale proportionally.
+//   VIP 15s 720p = 210cr  → 14 cr/sec
+//   VIP 15s 1080p = 495cr → 33 cr/sec
+//   VIP-FAST 15s 720p = 165cr → 11 cr/sec
+//   fast 15s 720p = 75cr → 5 cr/sec
+//   regular 15s 720p = 120cr → 8 cr/sec
+function estimateCredits(model, duration, taskType, resolution) {
   const m = (model || '').toLowerCase();
   const t = (taskType || '').toLowerCase();
-  const d = Number(duration) || 0;
+  const r = (resolution || '').toLowerCase();
+  const d = Math.max(1, Math.min(15, Number(duration) || 5));
 
-  // Image upscale: 2K = 1cr, 4K = 2cr (verified 2026-04-07 from live API)
-  // Real price from commerce_info takes priority when available
   if (t === 'image_upscale') return 2;
-
-  // Image generation
   if (t === 'text2image' || t === 'image2image') return 10;
 
-  // Video — VIP models
-  if (m.includes('vip')) {
-    if (d <= 5) return 20;
-    if (d <= 10) return 50;
-    return 75;
+  const is1080 = r.includes('1080');
+  // VIP non-fast (seedance2.0_vip)
+  if (m.includes('vip') && !m.includes('fast')) {
+    const perSec = is1080 ? 33 : 14;
+    return Math.round(perSec * d);
   }
-  // Video — seedance2.0fast (non-vip)
+  // VIP fast (seedance2.0fast_vip)
+  if (m.includes('vip') && m.includes('fast')) {
+    return Math.round(11 * d);
+  }
+  // Regular fast (seedance2.0fast)
   if (m.includes('fast')) {
-    if (d <= 5) return 35;
-    if (d <= 10) return 50;
-    return 75;
+    return Math.round(5 * d);
   }
-  // Video — seedance2.0 (full quality)
+  // Regular seedance2.0 or other video
   if (m.includes('seedance') || t.includes('video')) {
-    if (d <= 5) return 50;
-    if (d <= 10) return 75;
-    return 100;
+    return Math.round(8 * d);
   }
   return 0;
 }
 
 function isActiveStatus(s) { return s === 'querying' || s === 'submit'; }
 
+// Per-session tracker for legacy cache misses — prevents infinite re-query storm
+// on the same submit_id when query_result still returns an empty URL.
+const legacyRetriedThisSession = new Set();
+
+// Queue-movement watcher: detects stuck querying tasks (upload fail leaves
+// submit_id registered server-side but queue never advances).
+// Badge at 15min of no queue movement; auto-hide at 90min.
+const queueWatch = new Map(); // submit_id -> { firstSeenTs, lastQueueIdx, lastQueueChangeTs }
+const STUCK_BADGE_MS = 15 * 60 * 1000;
+const STUCK_HIDE_MS = 90 * 60 * 1000;
+
+function evaluateStuck(submitId, norm, nowTs) {
+  if (norm.status !== 'querying') {
+    queueWatch.delete(submitId);
+    return { stuck: false, autoHide: false };
+  }
+  const idx = norm.queue.idx;
+  let w = queueWatch.get(submitId);
+  if (!w) {
+    w = { firstSeenTs: nowTs, lastQueueIdx: idx, lastQueueChangeTs: nowTs };
+    queueWatch.set(submitId, w);
+  } else if (idx !== null && idx !== w.lastQueueIdx) {
+    w.lastQueueIdx = idx;
+    w.lastQueueChangeTs = nowTs;
+  }
+  const refTs = (w.lastQueueIdx !== null) ? w.lastQueueChangeTs : w.firstSeenTs;
+  const stuckMs = nowTs - refTs;
+  return { stuck: stuckMs > STUCK_BADGE_MS, autoHide: stuckMs > STUCK_HIDE_MS };
+}
+
+// ─── NORMALIZE TASK (§6.3) ───────────────────────────────────────────────────
+// Single firewall between CLI JSON shape and the rest of the monitor.
+// Handles all three inputs: list_task entry (li), query_result (qr), cache.
+//
+// CLI 1.4.1 shape notes:
+//   - list_task entries: {submit_id, gen_status, gen_task_type, prompt?, fail_reason?,
+//                          commerce_info?:{credit_count, triplets:[{benefit_type,...}]},
+//                          queue_info?:{queue_idx, queue_length, queue_status, debug_info(string)}
+//                          result_json? (absent for fail, querying, submit)}
+//     list_task NEVER includes video_url — only query_result does.
+//   - querying entries: only submit_id + gen_status + maybe prompt, no commerce_info.
+//   - fail entries: no result_json.
+//   - query_result: {submit_id, gen_status, credit_count, prompt, fail_reason,
+//                    queue_info, result_json:{videos:[{video_url,width,height,duration,fps,format}],
+//                                             images:[{image_url,width,height,format}]}}
+function normalizeTask(li, qr, cached) {
+  li = li || {};
+  const submitId = li.submit_id || (qr && qr.submit_id) || (cached && cached.submitId) || '';
+  const status = (qr && qr.gen_status) || li.gen_status || (cached && cached.status) || 'unknown';
+  const taskType = li.gen_task_type || (qr && qr.gen_task_type) || (cached && cached.taskType) || '';
+  const prompt = (qr && qr.prompt) || li.prompt || (cached && cached.prompt) || '';
+  const failReason = (qr && qr.fail_reason) || li.fail_reason || (cached && cached.failReason) || '';
+
+  // Credits: query_result.credit_count > commerce_info.credit_count
+  let credits = 0;
+  let creditEstimated = false;
+  if (qr && typeof qr.credit_count === 'number' && qr.credit_count > 0) credits = qr.credit_count;
+  else if (li.commerce_info && typeof li.commerce_info.credit_count === 'number' && li.commerce_info.credit_count > 0) credits = li.commerce_info.credit_count;
+  else if (cached && cached.creditCost > 0) credits = cached.creditCost;
+
+  // Queue info
+  const qi = (qr && qr.queue_info) || li.queue_info || {};
+  const queueIdx = (qi.queue_idx !== undefined && qi.queue_idx !== null && qi.queue_length > 0) ? qi.queue_idx : null;
+  const queueLen = (qi.queue_length > 0) ? qi.queue_length : null;
+  const queueStatus = qi.queue_status || '';
+
+  // Media — ONLY from query_result or cache. list_task never has URLs in 1.4.1.
+  const resultJson = (qr && qr.result_json) || null;
+  let videos = [];
+  let images = [];
+  if (resultJson) {
+    videos = Array.isArray(resultJson.videos) ? resultJson.videos.map(function(v) {
+      return { url: v.video_url || '', w: v.width || 0, h: v.height || 0,
+               duration: v.duration || 0, fps: v.fps || 0, format: v.format || '' };
+    }) : [];
+    images = Array.isArray(resultJson.images) ? resultJson.images.map(function(im) {
+      return { url: im.image_url || '', w: im.width || 0, h: im.height || 0, format: im.format || '' };
+    }) : [];
+  } else if (cached) {
+    videos = cached.videos || [];
+    images = cached.images || [];
+  }
+
+  // Triplets (new 1.4.1 truth for model/resolution)
+  const triplets = (li.commerce_info && Array.isArray(li.commerce_info.triplets)) ? li.commerce_info.triplets : [];
+
+  return {
+    submitId: submitId,
+    status: status,
+    taskType: taskType,
+    prompt: prompt,
+    videos: videos,
+    images: images,
+    creditCost: credits,
+    creditEstimated: creditEstimated,
+    failReason: failReason,
+    queue: { idx: queueIdx, length: queueLen, status: queueStatus },
+    triplets: triplets,
+    resolvedAt: (resultJson || (cached && cached.resolvedAt)) ? Date.now() : null
+  };
+}
+
+// Cache entry is considered "fresh enough" only if:
+//   - status is terminal (success/fail) AND
+//   - success: has ≥1 video OR image with non-empty URL (or is a failed task)
+//   - OR: success but with empty videos/images arrays (shouldn't happen but safe)
+function cacheEntryHasUrls(norm) {
+  if (!norm) return false;
+  if (norm.status === 'fail') return true;
+  if (norm.status !== 'success') return false;
+  const hasVideoUrl = (norm.videos || []).some(function(v) { return v.url && v.url.length > 0; });
+  const hasImageUrl = (norm.images || []).some(function(im) { return im.url && im.url.length > 0; });
+  // If both arrays empty, treat as stale (could be list_task-only cache)
+  if (norm.videos.length === 0 && norm.images.length === 0) return false;
+  return hasVideoUrl || hasImageUrl;
+}
+
 async function getStatus() {
-  const tasks = await run('"' + DREAMINA + '" list_task --limit=200');
-  if (!tasks || !Array.isArray(tasks)) return [];
+  const listRes = await cliExec('list_task', ['--limit=200'], { timeout: 25000, backoffKey: 'list_task' });
+  const tasks = listRes.data;
+  if (!Array.isArray(tasks)) return [];
   const inputMap = readInputs();
   const hiddenList = readHidden();
   const hiddenSet = new Set(hiddenList);
   const seen = new Set();
-  const unique = tasks.filter(t => {
-    if (!t.submit_id || seen.has(t.submit_id)) return false;
-    if (hiddenSet.has(t.submit_id)) return false; // skip hidden BEFORE query_result
+  const unique = tasks.filter(function(t) {
+    if (!t || !t.submit_id || seen.has(t.submit_id)) return false;
+    if (hiddenSet.has(t.submit_id)) return false;
     seen.add(t.submit_id);
     return ['querying', 'success', 'fail', 'submit'].includes(t.gen_status);
   });
-  // Split into active (need fresh data) and completed (can use cache)
-  const active = unique.filter(t => isActiveStatus(t.gen_status));
-  const completed = unique.filter(t => !isActiveStatus(t.gen_status));
-  const uncachedCompleted = completed.filter(t => !resultCache.has(t.submit_id));
 
-  // query_result only for active tasks + uncached completed tasks
-  const toQuery = active.concat(uncachedCompleted);
-  const queried = await Promise.all(
-    toQuery.map(t => run('"' + DREAMINA + '" query_result --submit_id=' + t.submit_id))
-  );
+  // Classify: active (always fresh-query), completed-missing-from-cache,
+  // and completed-legacy (cached but without URL — re-query once per session)
+  const active = [];
+  const uncached = [];
+  const legacyStale = [];
+  for (const li of unique) {
+    if (isActiveStatus(li.gen_status)) { active.push(li); continue; }
+    const cached = resultCache.get(li.submit_id);
+    if (!cached) { uncached.push(li); continue; }
+    if (cacheEntryHasUrls(cached)) continue; // good cache, skip
+    // Legacy entry without URL — try once per session.
+    if (!legacyRetriedThisSession.has(li.submit_id)) {
+      legacyStale.push(li);
+      legacyRetriedThisSession.add(li.submit_id);
+    }
+  }
 
-  // Cache newly-fetched completed results
+  const toQuery = active.concat(uncached, legacyStale);
+  // Bounded concurrency — never >N spawns in flight
+  const queried = await runPool(toQuery, function(li) {
+    return cliExec('query_result', ['--submit_id=' + li.submit_id], { timeout: 25000, backoffKey: 'query_result' }).then(function(r) {
+      return r.data;
+    });
+  }, getQueryPoolSize());
+
   const queryMap = new Map();
-  toQuery.forEach((t, i) => { queryMap.set(t.submit_id, queried[i]); });
-  uncachedCompleted.forEach(t => {
-    if (queryMap.has(t.submit_id)) resultCache.set(t.submit_id, queryMap.get(t.submit_id));
-  });
+  toQuery.forEach(function(li, i) { queryMap.set(li.submit_id, queried[i]); });
 
-  // Build detailed array in same order as unique
-  const detailed = unique.map(t => {
-    if (queryMap.has(t.submit_id)) return queryMap.get(t.submit_id);
-    return resultCache.get(t.submit_id) || null;
-  });
   let inputsDirty = false;
+  let hiddenDirty = false;
   const now = Date.now();
-  const result_list = unique.map((li, i) => {
-    const d = detailed[i];
-    let credits = (d && d.credit_count) || (li.commerce_info && li.commerce_info.credit_count) || 0;
-    const status = (d && d.gen_status) || li.gen_status || 'unknown';
-    const qi = (d && d.queue_info) || {};
-    const prompt = (d && d.prompt) || li.prompt || '';
-    const failReason = (d && d.fail_reason) || li.fail_reason || '';
-    const result = (d && (d.result_json || d.result)) || (li.result_json || li.result) || {};
-    const videos = result.videos || [];
-    const images = result.images || [];
-    const queueIdx = (qi.queue_idx !== undefined && qi.queue_idx !== null && qi.queue_length > 0) ? qi.queue_idx : null;
-    const queueLen = (qi.queue_length > 0) ? qi.queue_length : null;
+  const result_list = [];
+
+  for (const li of unique) {
+    const qr = queryMap.get(li.submit_id) || null;
+    const cached = resultCache.get(li.submit_id) || null;
+    const norm = normalizeTask(li, qr, cached);
+
+    // Update cache: only for completed status with URL-bearing entries
+    if (!isActiveStatus(norm.status)) {
+      if (qr && cacheEntryHasUrls(norm)) {
+        resultCache.set(li.submit_id, norm);
+      } else if (!cached && qr) {
+        // store even if empty to avoid immediate re-query next tick — legacyRetriedThisSession already gates retry
+        resultCache.set(li.submit_id, norm);
+      }
+    }
+
     let tracked = inputMap[li.submit_id] || {};
     const inputFiles = tracked.files || (Array.isArray(tracked) ? tracked : []);
-    const taskType = li.gen_task_type || '';
-    // Prefer real commerce_info pricing; fall back to estimateCredits() when API hasn't assigned pricing yet
+
+    // Pricing fallback for querying — commerce_info has priority
+    let credits = norm.creditCost;
     let creditsEstimated = false;
-    if (status === 'querying') {
+    if (norm.status === 'querying' && credits === 0) {
       const ci = li.commerce_info;
-      const triplets = (ci && ci.triplets) || [];
-      const bt = (triplets[0] && triplets[0].benefit_type) || (ci && ci.benefit_type) || '';
-      const hasRealPricing = bt !== '' && bt !== 'none';
+      const bt = (norm.triplets[0] && norm.triplets[0].benefit_type) || (ci && ci.benefit_type) || '';
+      const hasRealPricing = bt !== '' && bt !== 'none' && ci && typeof ci.credit_count === 'number' && ci.credit_count > 0;
       if (hasRealPricing) {
-        credits = ci.credit_count || 0;
+        credits = ci.credit_count;
       } else {
-        const est = estimateCredits(tracked.model, tracked.duration, taskType);
+        const est = estimateCredits(tracked.model, tracked.duration, norm.taskType, tracked.resolution);
         if (est > 0) { credits = est; creditsEstimated = true; }
       }
     }
+    if (credits === 0 && tracked.credits) credits = tracked.credits;
+
     if (!inputMap[li.submit_id]) {
-      // Only set discovered_at for tasks still active (querying/submit).
-      // Already-completed tasks are old — no timestamp prevents them from
-      // appearing as "today" in credit counts and sort order.
-      inputMap[li.submit_id] = isActiveStatus(status) ? { discovered_at: now } : {};
+      inputMap[li.submit_id] = isActiveStatus(norm.status) ? { discovered_at: now } : {};
       tracked = inputMap[li.submit_id];
       inputsDirty = true;
     }
-    if ((status === 'success' || status === 'fail') && credits > 0 && !tracked.credits) {
+    if ((norm.status === 'success' || norm.status === 'fail') && credits > 0 && !tracked.credits) {
       tracked.credits = credits;
       inputsDirty = true;
     }
-    const isHidden = hiddenList.indexOf(li.submit_id) !== -1;
-    if (isHidden) return null;
-    // Zombie: stuck active task, not submitted through monitor, discovered > 1 hour ago
+
     const discoveredAt = tracked.discovered_at || 0;
-    const isGhost = isActiveStatus(status) && queueIdx === null &&
+    const isGhost = isActiveStatus(norm.status) && norm.queue.idx === null &&
       !tracked.submitted_at && discoveredAt > 0 && (now - discoveredAt) > 3600000;
-    return {
-      submit_id: li.submit_id, status: status, task_type: li.gen_task_type || '',
-      fail_reason: failReason, credits: credits,
-      queue_idx: queueIdx, queue_length: queueLen, queue_status: qi.queue_status || '',
-      prompt: prompt,
-      model: tracked.model || '', ratio: tracked.ratio || '', gen_duration: tracked.duration || '',
-      images: images.map(im => ({ url: im.image_url || '', w: im.width || 0, h: im.height || 0 })),
-      videos: videos.map(v => ({ url: v.video_url || '', w: v.width || 0, h: v.height || 0 })),
+
+    const stuckState = evaluateStuck(li.submit_id, norm, now);
+    if (stuckState.autoHide) {
+      if (!hiddenSet.has(li.submit_id)) {
+        hiddenSet.add(li.submit_id);
+        hiddenList.push(li.submit_id);
+        hiddenDirty = true;
+        console.warn('[stuck] auto-hiding ' + li.submit_id + ' — querying without queue progress > ' + (STUCK_HIDE_MS / 60000) + 'min');
+      }
+      queueWatch.delete(li.submit_id);
+      continue;
+    }
+
+    result_list.push({
+      submit_id: li.submit_id,
+      status: norm.status,
+      task_type: norm.taskType,
+      fail_reason: norm.failReason,
+      credits: credits,
+      queue_idx: norm.queue.idx,
+      queue_length: norm.queue.length,
+      queue_status: norm.queue.status,
+      prompt: norm.prompt,
+      model: tracked.model || '',
+      ratio: tracked.ratio || '',
+      gen_duration: tracked.duration || '',
+      images: norm.images.map(function(im) { return { url: im.url, w: im.w, h: im.h }; }),
+      videos: norm.videos.map(function(v) { return { url: v.url, w: v.w, h: v.h }; }),
       input_files: inputFiles,
       credits_estimated: creditsEstimated,
       ghost: isGhost,
+      stuck: stuckState.stuck,
       submitted_at: tracked.submitted_at || null,
       discovered_at: tracked.discovered_at || null
-    };
-  }).filter(t => t !== null);
+    });
+  }
+
   if (inputsDirty) {
     fs.promises.writeFile(INPUTS_FILE, JSON.stringify(inputMap, null, 2))
-      .catch(err => console.error('[getStatus] Failed to write task-inputs.json:', err.message));
+      .catch(function(err) { console.error('[getStatus] Failed to write task-inputs.json:', err.message); });
+  }
+  if (hiddenDirty) {
+    fs.promises.writeFile(HIDDEN_FILE, JSON.stringify(hiddenList, null, 2))
+      .catch(function(err) { console.error('[getStatus] Failed to write hidden-tasks.json:', err.message); });
   }
   return result_list;
 }
 
 async function downloadTask(submitId, dir) {
-  return runRaw('"' + DREAMINA + '" query_result --submit_id=' + submitId + ' --download_dir="' + dir + '"');
+  const r = await cliExec('query_result', ['--submit_id=' + submitId, '--download_dir=' + dir], {
+    timeout: 120000, parseJson: false, backoffKey: 'query_result_download', respectBackoff: false
+  });
+  return { ok: r.ok, stdout: r.stdout, stderr: r.stderr, code: r.code };
 }
 
 function listDir(dirPath) {
@@ -749,6 +1127,12 @@ const HTML = [
 '  font-family: "Raleway", sans-serif;',
 '}',
 '.status-chip .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }',
+'.stuck-chip {',
+'  font-size: 10px; font-weight: 700; letter-spacing: 0.6px;',
+'  padding: 3px 8px; border-radius: 3px;',
+'  background: #3a2a10; color: #ffb84a; border: 1px solid #7a5020;',
+'  font-family: "Raleway", sans-serif; cursor: help;',
+'}',
 '.card.querying .status-chip, .card.submit .status-chip { background: var(--green-dim); color: var(--green); }',
 '.card.querying .dot, .card.submit .dot { background: var(--green); box-shadow: 0 0 6px var(--green); animation: blink 1.8s infinite; }',
 '@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }',
@@ -1195,6 +1579,14 @@ const HTML = [
 '.setup-checks .fail { color:var(--red,#ef4444); }',
 '.setup-checks .wait { color:var(--text3); }',
 '.setup-actions { margin-top:12px; display:flex; gap:8px; justify-content:center; }',
+'.login-device { margin-top:10px; padding:12px 16px; background:var(--bg); border:1px solid var(--border); border-radius:8px; display:inline-block; text-align:left; font-family:DM Mono,monospace; font-size:12px; }',
+'.login-device-title { color:var(--text2); margin-bottom:6px; font-size:11px; text-transform:uppercase; letter-spacing:.4px; }',
+'.login-device-uri { color:var(--green); margin-bottom:8px; word-break:break-all; }',
+'.login-device-uri a { color:var(--green); text-decoration:underline; }',
+'.login-device-code-row { display:flex; align-items:center; gap:10px; }',
+'.login-device-code { font-size:18px; letter-spacing:2px; color:var(--text); font-weight:bold; background:var(--card); padding:4px 10px; border-radius:4px; border:1px dashed var(--border); }',
+'.compat-banner { position:fixed; top:60px; left:0; right:0; z-index:48; background:#3b2410; color:#f59e0b; border-bottom:1px solid #78350f; padding:6px 16px; text-align:center; font-size:12px; font-family:DM Mono,monospace; }',
+'.compat-banner.hidden { display:none; }',
 '/* ── HEALTH PANEL ── */',
 '.health-panel { margin-top:16px; padding:12px; background:var(--bg); border-radius:8px; font-size:12px; font-family:DM Mono,monospace; }',
 '.health-panel h4 { margin:0 0 8px; font-size:13px; color:var(--text1); }',
@@ -1209,6 +1601,9 @@ const HTML = [
 '</head>',
 '<body>',
 '<canvas class="bg-canvas" id="bgCanvas"></canvas>',
+'',
+'<!-- CLI Compat Banner -->',
+'<div class="compat-banner hidden" id="cliCompatBanner"></div>',
 '',
 '<!-- Setup Banner -->',
 '<div class="setup-banner hidden" id="setupBanner">',
@@ -1895,6 +2290,7 @@ const HTML = [
 '  h += \'<div class="card-head">\';',
 '  h += \'<div class="card-head-left">\';',
 '  if (s !== "success") h += \'<div class="status-chip"><span class="dot"></span>\' + (isGhost ? "GHOST" : esc(s).toUpperCase()) + \'</div>\';',
+'  if (t.stuck && s === "querying" && !isGhost) h += \'<div class="stuck-chip" title="No queue progress for 15+ min. Will auto-hide after 90 min. Likely upload failure.">\\u26A0 STUCK?</div>\';',
 '  // task_type chip removed — too verbose',
 '  if (t.model) h += \'<span class="type-chip">\' + esc(t.model) + \'</span>\';',
 '  if (t.ratio) h += \'<span class="type-chip">\' + esc(t.ratio) + \'</span>\';',
@@ -2749,6 +3145,16 @@ const HTML = [
 '    var banner = document.getElementById("setupBanner");',
 '    var c = s.checks || {};',
 '    var allOk = s.step === "ready" || (c.node && c.node.ok && c.cli && c.cli.installed && c.account && c.account.loggedIn);',
+'    // Version compat mini-banner (non-blocking)',
+'    var compatEl = document.getElementById("cliCompatBanner");',
+'    if (compatEl) {',
+'      if (s.cli_version && s.cli_version.compat === "warn" && s.cli_version.file) {',
+'        compatEl.innerHTML = "\\u26A0 CLI version " + s.cli_version.file + " differs from monitor\'s tested range (" + (c.cli && c.cli.known_compat ? c.cli.known_compat.join(", ") : "1.4.1") + "). Functionality may regress.";',
+'        compatEl.classList.remove("hidden");',
+'      } else {',
+'        compatEl.classList.add("hidden");',
+'      }',
+'    }',
 '    if (allOk) {',
 '      banner.classList.add("hidden");',
 '      if (setupPollTimer) { clearInterval(setupPollTimer); setupPollTimer = null; }',
@@ -2759,10 +3165,28 @@ const HTML = [
 '    var h = "";',
 '    if (c.node) h += \'<div class="\' + (c.node.ok ? "ok" : "fail") + \'">\' + (c.node.ok ? "\\u2713" : "\\u2717") + " Node.js " + (c.node.version || "?") + \'</div>\';',
 '    if (c.cli) h += \'<div class="\' + (c.cli.installed ? "ok" : "wait") + \'">\' + (c.cli.installed ? "\\u2713 CLI installed" : (s.step === "downloading" ? "\\u2192 Downloading CLI..." : "\\u2717 CLI not found")) + \'</div>\';',
-'    if (c.account) h += \'<div class="\' + (c.account.loggedIn ? "ok" : "wait") + \'">\' + (c.account.loggedIn ? "\\u2713 Logged in" : (s.step === "login" ? "\\u2192 Waiting for login..." : "\\u2717 Not logged in")) + \'</div>\';',
+'    if (c.account) h += \'<div class="\' + (c.account.loggedIn ? "ok" : "wait") + \'">\' + (c.account.loggedIn ? "\\u2713 Logged in" : (s.step === "login" ? "\\u2192 Device Flow authorization pending\\u2026" : "\\u2717 Not logged in")) + \'</div>\';',
+'    if (s.step === "login" && s.verification_uri && s.user_code) {',
+'      h += \'<div class="login-device"><div class="login-device-title">\\u25B8 Open this URL and enter the code:</div>\';',
+'      h += \'<div class="login-device-uri"><a href="\' + esc(s.verification_uri) + \'" target="_blank" rel="noopener">\' + esc(s.verification_uri) + \'</a></div>\';',
+'      h += \'<div class="login-device-code-row"><span class="login-device-code" id="loginUserCode">\' + esc(s.user_code) + \'</span>\';',
+'      h += \'<button class="btn" style="padding:2px 10px;font-size:11px" onclick="copyLoginCode()">Copy code</button></div>\';',
+'      h += \'</div>\';',
+'    } else if (s.step === "login") {',
+'      h += \'<div class="wait">\\u2026 waiting for CLI to emit OAuth Device Flow code</div>\';',
+'    }',
 '    if (s.error) h += \'<div class="fail">\\u2717 \' + esc(s.error) + \'</div>\';',
 '    document.getElementById("setupChecks").innerHTML = h;',
 '  }).catch(function(){});',
+'}',
+'function copyLoginCode() {',
+'  var el = document.getElementById("loginUserCode");',
+'  if (!el) return;',
+'  var text = el.textContent;',
+'  try {',
+'    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text);',
+'    else { var ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta); }',
+'  } catch {}',
 '}',
 'function retrySetup() {',
 '  fetch("/api/setup-retry", { method: "POST" });',
@@ -3022,19 +3446,26 @@ const server = http.createServer(async (req, res) => {
 
   // ─── HEALTH & SETUP ENDPOINTS ──────────────────────────────────────────────
   if (req.method === 'GET' && req.url === '/api/health') {
-    var cliVer = '';
-    try {
-      var verResult = await runRaw('"' + DREAMINA + '" --version');
-      cliVer = verResult.ok ? verResult.stdout.trim() : '';
-    } catch {}
+    var cliVer = cliVersionInfo.build || '';
+    if (!cliVer) {
+      try { await refreshVersionInfo(); cliVer = cliVersionInfo.build || ''; } catch {}
+    }
     var creditInfo = null;
     try {
-      creditInfo = await run('"' + DREAMINA + '" user_credit');
+      const r = await cliExec('user_credit', [], { timeout: 8000, backoffKey: 'user_credit', respectBackoff: false });
+      creditInfo = r.data;
     } catch {}
     res.writeHead(200, { 'Content-Type': 'application/json', ...cors });
     res.end(JSON.stringify({
       node: { version: process.versions.node, ok: healthState.node.ok },
-      cli: { installed: hasDreamina(), path: DREAMINA, version: cliVer },
+      cli: {
+        installed: hasDreamina(),
+        path: DREAMINA,
+        version: cliVer,
+        file_version: cliVersionInfo.file,
+        compat: cliVersionInfo.compat,
+        known_compat: KNOWN_COMPAT
+      },
       account: { loggedIn: healthState.account.loggedIn, credits: creditInfo },
       os: { platform: process.platform, arch: process.arch },
       uptime: Math.floor(process.uptime())
@@ -3044,7 +3475,20 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'GET' && req.url === '/api/setup-status') {
     res.writeHead(200, { 'Content-Type': 'application/json', ...cors });
-    res.end(JSON.stringify({ step: setupState.step, error: setupState.error, progress: setupState.progress, checks: healthState }));
+    res.end(JSON.stringify({
+      step: setupState.step,
+      error: setupState.error,
+      progress: setupState.progress,
+      verification_uri: setupState.verification_uri || null,
+      user_code: setupState.user_code || null,
+      checks: healthState,
+      cli_version: cliVersionInfo,
+      cli_last_error: {
+        user_credit: cliLastError('user_credit'),
+        list_task: cliLastError('list_task'),
+        query_result: cliLastError('query_result')
+      }
+    }));
     return;
   }
 

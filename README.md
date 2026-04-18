@@ -204,9 +204,10 @@ The monitor tracks all Dreamina CLI generation types:
 
 | Model | Type | Cost |
 |-------|------|------|
-| `seedance2.0vip` | Video | ~20 cr / 4s (best value) |
-| `seedance2.0` | Video | ~50 cr / 4s |
-| `seedance2.0fast` / `seedance2.0fastvip` | Video | Faster, lower quality |
+| `seedance2.0_vip` | Video | VIP 15s 720p = 210 cr, 1080p = 495 cr |
+| `seedance2.0` | Video | 15s 720p = 120 cr |
+| `seedance2.0fast` | Video | 15s 720p = 75 cr (fast, lower quality) |
+| `seedance2.0fast_vip` | Video | 15s 720p = 165 cr (VIP-fast) |
 | `5.0` / `4.6` / `4.5` / `lab` | Image | Various quality tiers |
 
 Video ratios: `16:9` `9:16` `1:1` `4:3` `3:4` `21:9` | Duration: **4-15 seconds** | Resolution: 720p
@@ -225,7 +226,7 @@ You (in IDE) → AI Agent → Dreamina CLI → JiMeng API
 ```
 
 1. **Prompt** — ask your agent to write a Seedance 2.0 prompt (the `seedance` skill generates expert-level prompts automatically)
-2. **Submit** — agent runs `dreamina text2video --prompt="..." --model=seedance2.0vip`
+2. **Submit** — agent runs `dreamina text2video --prompt="..." --model=seedance2.0_vip`
 3. **Monitor** — generation appears on dashboard in real-time with queue position
 4. **Review** — hover-to-play the video, check reference images, compare in gallery
 5. **Iterate** — tweak prompt in agent, resubmit, compare side by side
@@ -313,14 +314,14 @@ dreamina login                    # Auth (opens browser)
 dreamina user_credit              # Check balance
 dreamina text2video \
   --prompt="..." \
-  --model=seedance2.0vip \
+  --model=seedance2.0_vip \
   --ratio=16:9 --duration=15      # Submit generation
 
 dreamina multimodal2video \
   --prompt="@Image1 as env..." \
   --image="ref1.jpg" \
   --image="ref2.jpg" \
-  --model=seedance2.0vip          # With references
+  --model=seedance2.0_vip          # With references
 ```
 
 ---
@@ -356,7 +357,7 @@ Full details in [ROADMAP.md](ROADMAP.md).
 |---------|----------|
 | CLI not found | `curl -s https://jimeng.jianying.com/cli \| bash` then restart terminal |
 | Not logged in | `dreamina login` — opens browser for auth |
-| No tasks | Submit something: `dreamina text2video --prompt="test" --model=seedance2.0vip` |
+| No tasks | Submit something: `dreamina text2video --prompt="test" --model=seedance2.0_vip` |
 | Thumbnails missing | Reference files must exist at original paths on disk |
 | Content filter | Remove brand names, soften descriptions — credits refunded on rejection |
 | Queue slow | Normal at peak: ~500-900 positions/min. VIP models may be faster |
