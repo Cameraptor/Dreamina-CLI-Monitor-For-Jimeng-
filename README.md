@@ -1,3 +1,4 @@
+[![Version](https://img.shields.io/badge/Version-v1.2.1-21c134)]()
 [![GitHub](https://img.shields.io/badge/GitHub-Cameraptor-181717?logo=github)](https://github.com/Cameraptor)
 [![License](https://img.shields.io/badge/License-MIT-21c134.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-20+-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org)
@@ -337,13 +338,23 @@ dreamina multimodal2video \
 
 ---
 
-## Recent Updates (2026-04-18)
+## What's New in v1.2.1 (2026-04-18)
 
-- **Dreamina CLI 1.4.1 support** — OAuth Device Flow login (verification URI + code in UI), new `list_task` shape handled, failing/querying tasks render without crashing, version parity banner warns on unfamiliar CLI versions
-- **Faster restarts** — completed task URLs now persist to `result-cache.json` between sessions. Warm start ~28% faster (14s → 10s) with 100+ cached tasks; no more re-querying every result on each boot
-- **Stuck-task auto-hide** — tasks that sit in `querying` without queue movement for >15min show a yellow `⚠ STUCK?` badge; after 90min total (tracked persistently via `discovered_at`, survives reboots) they're automatically moved to the hidden list
-- **Bounded CLI concurrency** — capped at 5 parallel `query_result` spawns (configurable) with exponential backoff on CLI errors (1s → 30s). No more CPU spikes from `Promise.all(200)` on cold refresh
-- **Path sanitization guidance** — new skill rule prevents zombie tasks: spaces/non-ASCII chars in `--image`/`--video`/`--audio` paths cause silent upload failures on server side. Copy inputs to `~/dreamina_tmp/` with ASCII-only names before submit
+**Monitor:**
+- **Works with the latest Dreamina CLI (1.4.1)** — new login flow via browser code, handles all the new data formats, warns you if your CLI version is untested
+- **Starts up faster** — remembers your completed tasks between sessions. ~28% faster boot (14s → 10s) with 100+ tasks — no more waiting while it re-fetches everything
+- **Cleans up stuck tasks automatically** — if something freezes in the queue with no progress, it shows a yellow ⚠ warning after 15min, and auto-hides it after 90min. Even works across computer restarts
+- **No more CPU spikes** — smooth throttled fetching instead of firing 200 requests at once when you refresh
+- **Prevents ghost tasks** — added guidance to the AI skill to avoid paths with spaces or non-English characters (they cause silent upload failures → stuck tasks)
+
+**Seedance AI Prompt Skill:**
+- **Real faces done right** — 3 legal ways to use human faces in videos (virtual portrait library, real person authorization via QR, reusing trusted generated content)
+- **On-screen text** — slogans, subtitles, speech bubbles, title cards, brand watermarks — with proper timing and styling
+- **Smarter assistant** — no more silent guessing; asks you multiple-choice questions when something's ambiguous
+- **Character & storyboard sheets** — use one reference image with multiple angles to save image slots
+- **Video stitching** — join 2-3 clips with auto-generated transitions (up to 15s total)
+- **Fixed contradictions** in previous rules: VIP models now optional (asks you first), English primary / Chinese fallback for action content
+- **New technical params** — 21:9 cinematic ratio, 480p drafts, direct Volcano API access for advanced controls
 
 ---
 
@@ -354,7 +365,7 @@ dreamina multimodal2video \
 | **v1.0** | Done | Dashboard, cards, filters, gallery, lightbox, batch download |
 | **v1.1** | Done | Settings, likes, notifications, session stats, radar grid |
 | **v1.2** | Done | Cross-platform, self-configuring, auto-download CLI |
-| **v1.2.1** | Done | CLI 1.4.1 compat, persistent cache, stuck-task auto-hide |
+| **v1.2.1** | **Current** | CLI 1.4.1 compat, faster startup, stuck-task cleanup, Seedance skill v2 |
 | **v1.3** | Next | Standalone `.exe` / binary — double-click to run |
 | **v2.0** | Planned | Side-by-side comparison, tags, prompt search, WebSocket |
 
