@@ -337,6 +337,16 @@ dreamina multimodal2video \
 
 ---
 
+## Recent Updates (2026-04-18)
+
+- **Dreamina CLI 1.4.1 support** — OAuth Device Flow login (verification URI + code in UI), new `list_task` shape handled, failing/querying tasks render without crashing, version parity banner warns on unfamiliar CLI versions
+- **Faster restarts** — completed task URLs now persist to `result-cache.json` between sessions. Warm start ~28% faster (14s → 10s) with 100+ cached tasks; no more re-querying every result on each boot
+- **Stuck-task auto-hide** — tasks that sit in `querying` without queue movement for >15min show a yellow `⚠ STUCK?` badge; after 90min total (tracked persistently via `discovered_at`, survives reboots) they're automatically moved to the hidden list
+- **Bounded CLI concurrency** — capped at 5 parallel `query_result` spawns (configurable) with exponential backoff on CLI errors (1s → 30s). No more CPU spikes from `Promise.all(200)` on cold refresh
+- **Path sanitization guidance** — new skill rule prevents zombie tasks: spaces/non-ASCII chars in `--image`/`--video`/`--audio` paths cause silent upload failures on server side. Copy inputs to `~/dreamina_tmp/` with ASCII-only names before submit
+
+---
+
 ## Roadmap
 
 | Version | Status | What |
@@ -344,6 +354,7 @@ dreamina multimodal2video \
 | **v1.0** | Done | Dashboard, cards, filters, gallery, lightbox, batch download |
 | **v1.1** | Done | Settings, likes, notifications, session stats, radar grid |
 | **v1.2** | Done | Cross-platform, self-configuring, auto-download CLI |
+| **v1.2.1** | Done | CLI 1.4.1 compat, persistent cache, stuck-task auto-hide |
 | **v1.3** | Next | Standalone `.exe` / binary — double-click to run |
 | **v2.0** | Planned | Side-by-side comparison, tags, prompt search, WebSocket |
 
